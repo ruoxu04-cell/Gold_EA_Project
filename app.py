@@ -16,11 +16,6 @@ import time
 import json
 
 # ============================================================
-# 导入自动刷新库
-# ============================================================
-from streamlit_autorefresh import st_autorefresh
-
-# ============================================================
 # 页面配置
 # ============================================================
 st.set_page_config(
@@ -31,11 +26,6 @@ st.set_page_config(
 
 st.title("📊 黄金 XAUUSD AI 交易系统")
 st.markdown("基于随机森林 AI 模型的实时交易信号")
-
-# ============================================================
-# 🔄 自动刷新：每30秒刷新一次页面
-# ============================================================
-st_autorefresh(interval=30000, key="gold_price_refresh")
 
 # ============================================================
 # 加载AI模型
@@ -57,46 +47,31 @@ if model is None:
     st.stop()
 
 # ============================================================
-# 🚀 获取实时黄金价格（Yadio API - 完全免费，无需注册）
+# 获取实时黄金价格（免费API）
 # ============================================================
 @st.cache_data(ttl=30)
 def get_realtime_price():
-    """使用可靠的免费API获取实时黄金价格"""
+    """使用 Twelve Data API 获取实时黄金价格"""
     
-    # 备选方案1: 使用Gold-API (免费，无需注册，较稳定)
+    # 把你的 API Key 填在这里
+    API_KEY = "b3b8143cd542493b9de1fb5aa13a9d07"  # ← 去 twelvedata.com 注册获取
+    
     try:
-        url = "https://www.gold-api.com/price/XAU"
+        url = f"https://api.twelvedata.com/price?symbol=XAU/USD&apikey={API_KEY}"
         response = requests.get(url, timeout=10)
         if response.status_code == 200:
             data = response.json()
             price = data.get('price')
             if price:
-                return float(price), "Gold-API (实时)"
-    except Exception as e:
-        print(f"Gold-API 获取失败: {e}")
+                return float(price), "Twelve Data"
+    except:
+        pass
     
-    # 备选方案2: 使用ExchangeRate-API的黄金数据 (免费，无需注册)
-    try:
-        url = "https://api.exchangerate-api.com/v4/latest/USD"
-        response = requests.get(url, timeout=10)
-        if response.status_code == 200:
-            data = response.json()
-            # 注意：此API返回的金价通常是1盎司黄金的美元价格
-            price = data.get('rates', {}).get('XAU')
-            if price:
-                # 如果返回的是1/XAU格式，需要转换
-                if price < 1:
-                    price = 1 / price
-                return float(price), "ExchangeRate-API"
-    except Exception as e:
-        print(f"ExchangeRate-API 获取失败: {e}")
-    
-    # 最后的备用方案：模拟数据
+    # 备用：模拟数据
     seed = int(time.time() / 30)
     np.random.seed(seed)
-    # 让模拟数据更接近真实值，在4000附近波动
-    base_price = 4000 + np.random.randn() * 10
-    return float(base_price), "模拟数据 ⚠️ (请检查网络)"
+    base_price = 2420 + np.random.randn() * 2
+    return float(base_price), "模拟数据 ⚠️"
 
 @st.cache_data(ttl=60)
 def get_historical_data():
@@ -232,9 +207,9 @@ with col4:
     )
 
 # ============================================================
-# 👇 概率条（在4列下方）
+# 👇 新增：概率条（在4列下方）
 # ============================================================
-st.markdown("---")
+st.markdown("---")  # 分割线
 
 # 计算概率
 up_prob = prob * 100
@@ -393,7 +368,7 @@ with col_footer1:
     st.caption(f"📊 AI模型：{model_type}")
 
 with col_footer2:
-    st.caption("📡 数据来源：Yadio API（免费）")
+    st.caption("📡 数据来源：API (Yadio)")
 
 with col_footer3:
     st.caption("⚠️ 仅供参考，不构成投资建议")
