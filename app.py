@@ -57,13 +57,13 @@ if model is None:
     st.stop()
 
 # ============================================================
-# 获取实时黄金价格（免费API）
+# 🚀 获取实时黄金价格（Yadio API - 完全免费，无需注册）
 # ============================================================
 @st.cache_data(ttl=30)
 def get_realtime_price():
-    """使用免费 API 获取实时黄金价格"""
+    """使用 Yadio API 获取实时黄金价格（完全免费，无需注册）"""
     
-    # API 1: Yadio（完全免费，无需注册）
+    # Yadio API（免费，无需注册，稳定）
     try:
         url = "https://api.yadio.io/rates/XAU.json"
         response = requests.get(url, timeout=10)
@@ -72,20 +72,8 @@ def get_realtime_price():
             price = data.get('XAU', {}).get('USD')
             if price:
                 return float(price), "Yadio API"
-    except:
-        pass
-    
-    # API 2: Gold-API（完全免费，无需注册）
-    try:
-        url = "https://www.gold-api.com/price/XAU"
-        response = requests.get(url, timeout=10)
-        if response.status_code == 200:
-            data = response.json()
-            price = data.get('price')
-            if price:
-                return float(price), "Gold-API"
-    except:
-        pass
+    except Exception as e:
+        print(f"Yadio API 获取失败: {e}")
     
     # 备用：模拟数据
     seed = int(time.time() / 30)
@@ -388,7 +376,7 @@ with col_footer1:
     st.caption(f"📊 AI模型：{model_type}")
 
 with col_footer2:
-    st.caption("📡 数据来源：免费API")
+    st.caption("📡 数据来源：Yadio API（免费）")
 
 with col_footer3:
     st.caption("⚠️ 仅供参考，不构成投资建议")
