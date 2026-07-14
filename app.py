@@ -380,7 +380,7 @@ with st.spinner("🔄 正在获取实时数据..."):
 col_title, col_time = st.columns([3, 1])
 
 with col_title:
-    st.markdown('<span class="main-title">🏆 TOKONG黄金交易</span>', unsafe_allow_html=True)
+    st.markdown('<span class="main-title">🏆 GS黄金交易</span>', unsafe_allow_html=True)
 
 with col_time:
     st.markdown(f'<p style="text-align:right;color:#8892b0;font-size:14px;margin-top:10px;">🕐 {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}</p>', unsafe_allow_html=True)
@@ -629,7 +629,7 @@ st.plotly_chart(fig, use_container_width=True)
 # ============================================================
 st.markdown("""
 <div class="footer">
-    <p>🏆 TOKONG黄金交易</p>
+    <p>🏆 GS黄金交易</p>
     <p style="color:#2d3850;">⚠️ 仅供参考，不构成投资建议 · 交易有风险，请谨慎决策</p>
 </div>
 """, unsafe_allow_html=True)
