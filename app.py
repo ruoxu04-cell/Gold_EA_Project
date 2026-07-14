@@ -629,7 +629,7 @@ st.plotly_chart(fig, use_container_width=True)
 # ============================================================
 st.markdown("""
 <div class="footer">
-    <p>🏆 TOKONG黄金交易 · 智能决策系统</p>
+    <p>🏆 TOKONG黄金交易</p>
     <p style="color:#2d3850;">⚠️ 仅供参考，不构成投资建议 · 交易有风险，请谨慎决策</p>
 </div>
 """, unsafe_allow_html=True)
