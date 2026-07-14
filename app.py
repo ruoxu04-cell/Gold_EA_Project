@@ -368,7 +368,7 @@ with col_footer1:
     st.caption(f"📊 AI模型：{model_type}")
 
 with col_footer2:
-    st.caption("📡 数据来源：免费API (Yadio)")
+    st.caption("📡 数据来源：API (Yadio)")
 
 with col_footer3:
     st.caption("⚠️ 仅供参考，不构成投资建议")
