@@ -33,33 +33,67 @@ st.markdown("""
         background: linear-gradient(135deg, #0a0e1a 0%, #1a1a2e 50%, #16213e 100%);
     }
     
-    /* 主标题 */
+    /* 顶部标题行 */
+    .header-container {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 15px 0 5px 0;
+        border-bottom: 1px solid rgba(255,215,0,0.1);
+    }
+    .header-left {
+        display: flex;
+        align-items: center;
+    }
     .main-title {
-        text-align: center;
-        padding: 20px 0 10px 0;
         background: linear-gradient(90deg, #f7971e, #ffd200);
         -webkit-background-clip: text;
         -webkit-text-fill-color: transparent;
-        font-size: 48px;
+        font-size: 36px;
         font-weight: 800;
         letter-spacing: 2px;
-        text-shadow: 0 0 40px rgba(247, 151, 30, 0.3);
     }
-    
-    .sub-title {
-        text-align: center;
+    .header-time {
         color: #8892b0;
         font-size: 14px;
-        margin-bottom: 20px;
-        letter-spacing: 3px;
+        letter-spacing: 1px;
     }
     
-    /* 品牌卡片 */
+    /* 价格居中显示 */
+    .price-center {
+        text-align: center;
+        padding: 20px 0 15px 0;
+    }
+    .price-label {
+        color: #8892b0;
+        font-size: 14px;
+        text-transform: uppercase;
+        letter-spacing: 2px;
+    }
+    .price-display {
+        font-size: 52px;
+        font-weight: 700;
+        color: #ffffff;
+        text-shadow: 0 0 40px rgba(247,151,30,0.2);
+        line-height: 1.3;
+    }
+    .price-change-positive {
+        color: #00ff88;
+        font-size: 18px;
+        font-weight: 600;
+    }
+    .price-change-negative {
+        color: #ff4757;
+        font-size: 18px;
+        font-weight: 600;
+    }
+    
+    /* 品牌卡片（三列） */
     .brand-card {
         background: rgba(255,255,255,0.03);
         border: 1px solid rgba(255,215,0,0.12);
         border-radius: 16px;
-        padding: 18px 14px;
+        padding: 16px 14px;
         backdrop-filter: blur(10px);
         box-shadow: 0 8px 32px rgba(0,0,0,0.3);
         transition: all 0.3s ease;
@@ -80,31 +114,13 @@ st.markdown("""
     }
     .metric-value {
         color: #ffffff;
-        font-size: 28px;
+        font-size: 26px;
         font-weight: 700;
         margin: 4px 0 2px 0;
     }
     .metric-sub {
         color: #8892b0;
         font-size: 14px;
-    }
-    
-    /* 价格 */
-    .price-display {
-        font-size: 38px;
-        font-weight: 700;
-        color: #ffffff;
-        text-shadow: 0 0 30px rgba(247,151,30,0.15);
-    }
-    .price-change-positive {
-        color: #00ff88;
-        font-size: 16px;
-        font-weight: 600;
-    }
-    .price-change-negative {
-        color: #ff4757;
-        font-size: 16px;
-        font-weight: 600;
     }
     
     /* 信号标签 */
@@ -141,7 +157,7 @@ st.markdown("""
         border: none;
         height: 2px;
         background: linear-gradient(90deg, transparent, #f7971e, #ffd200, #f7971e, transparent);
-        margin: 25px 0;
+        margin: 20px 0;
     }
     
     /* 交易建议卡片 */
@@ -174,27 +190,6 @@ st.markdown("""
         margin: 3px 0;
     }
     
-    /* 状态标签 */
-    .status-badge {
-        display: inline-block;
-        padding: 3px 14px;
-        border-radius: 20px;
-        font-size: 12px;
-        font-weight: 600;
-        letter-spacing: 0.5px;
-    }
-    .status-online {
-        background: #00ff8833;
-        color: #00ff88;
-        border: 1px solid #00ff8844;
-    }
-    
-    /* 进度条 */
-    .stProgress > div > div {
-        background: linear-gradient(90deg, #f7971e, #ffd200) !important;
-        border-radius: 10px !important;
-    }
-    
     /* 底部 */
     .footer {
         text-align: center;
@@ -204,9 +199,11 @@ st.markdown("""
         border-top: 1px solid rgba(255,255,255,0.05);
         margin-top: 30px;
     }
-    .footer a {
-        color: #f7971e;
-        text-decoration: none;
+    
+    /* 进度条 */
+    .stProgress > div > div {
+        background: linear-gradient(90deg, #f7971e, #ffd200) !important;
+        border-radius: 10px !important;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -332,42 +329,41 @@ with st.spinner("🔄 正在获取实时数据..."):
     atr = latest.get('ATR', 12)
 
 # ============================================================
+# 🏆 顶部：标题在左 + 时间在右
 # ============================================================
-# 🏆 显示主标题
-# ============================================================
-st.markdown('<h1 class="main-title">🏆 TOKONG黄金交易</h1>', unsafe_allow_html=True)
-st.markdown('<p class="sub-title">智能黄金交易决策系统 · 实时AI分析</p>', unsafe_allow_html=True)
+col_title, col_time = st.columns([3, 1])
 
-# ============================================================
-# 状态栏
-# ============================================================
-col_status1, col_status2 = st.columns(2)
-with col_status1:
-    st.markdown(f'<span class="status-badge status-online">● 系统在线</span>', unsafe_allow_html=True)
-with col_status2:
-    st.caption(f"🕐 {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+with col_title:
+    st.markdown('<span class="main-title">🏆 TOKONG黄金交易</span>', unsafe_allow_html=True)
+
+with col_time:
+    st.markdown(f'<p style="text-align:right;color:#8892b0;font-size:14px;margin-top:10px;">🕐 {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}</p>', unsafe_allow_html=True)
 
 st.markdown('<hr class="gold-divider">', unsafe_allow_html=True)
 
 # ============================================================
-# 4个核心指标 + 概率条
+# 💰 实时价格（居中显示）
 # ============================================================
-col1, col2, col3, col4 = st.columns(4)
-
 price_change = current_price - df['Close'].iloc[-2] if len(df) > 1 else 0
 change_symbol = "▲" if price_change >= 0 else "▼"
 change_color = "price-change-positive" if price_change >= 0 else "price-change-negative"
 
-with col1:
-    st.markdown(f"""
-    <div class="brand-card">
-        <div class="metric-label">💰 实时价格</div>
-        <div class="price-display">${current_price:,.2f}</div>
-        <div class="{change_color}">{change_symbol} ${abs(price_change):.2f}</div>
-    </div>
-    """, unsafe_allow_html=True)
+st.markdown(f"""
+<div class="price-center">
+    <div class="price-label">💰 实时价格</div>
+    <div class="price-display">${current_price:,.2f}</div>
+    <div class="{change_color}">{change_symbol} ${abs(price_change):.2f}</div>
+</div>
+""", unsafe_allow_html=True)
 
-with col2:
+st.markdown('<hr class="gold-divider">', unsafe_allow_html=True)
+
+# ============================================================
+# 📊 RSI + MACD + AI信号（三列）
+# ============================================================
+col_rsi, col_macd, col_ai = st.columns(3)
+
+with col_rsi:
     rsi_val = latest.get('RSI', 50)
     rsi_status = "超买 🔴" if rsi_val > 70 else "超卖 🟢" if rsi_val < 30 else "中性 ⚪"
     st.markdown(f"""
@@ -378,7 +374,7 @@ with col2:
     </div>
     """, unsafe_allow_html=True)
 
-with col3:
+with col_macd:
     macd_val = latest.get('MACD', 0)
     signal_val = latest.get('MACD_Signal', 0)
     macd_status = "多头 📈" if macd_val > signal_val else "空头 📉"
@@ -390,7 +386,7 @@ with col3:
     </div>
     """, unsafe_allow_html=True)
 
-with col4:
+with col_ai:
     signal_class = "signal-bullish" if prob > 0.6 else "signal-bearish" if prob < 0.4 else "signal-neutral"
     signal_text = "看涨 📈" if prob > 0.6 else "看跌 📉" if prob < 0.4 else "观望 ⏸️"
     st.markdown(f"""
