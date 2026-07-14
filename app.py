@@ -24,50 +24,79 @@ st.set_page_config(
 )
 
 # ============================================================
-# 🛡️ 隐藏 GitHub 和 Streamlit 标识（电脑+手机全平台）
+# 🛡️ 隐藏 Streamlit 和 GitHub 标识（全平台）
 # ============================================================
-hide_streamlit_style = """
-    <style>
-    /* 电脑版隐藏 */
+st.markdown("""
+<style>
+    /* 隐藏所有 Streamlit 品牌元素 */
     #MainMenu {visibility: hidden;}
     footer {visibility: hidden;}
     header {visibility: hidden;}
-    .viewerBadge_container__1QSob {display: none !important;}
-    .stDeployButton {display: none !important;}
-    .stAppViewContainer .stDeployButton {display: none !important;}
-    [data-testid="stStatusWidget"] {display: none !important;}
-    .stApp > header {display: none !important;}
-    .stApp > div:last-child {display: none !important;}
     
-    /* 手机版隐藏 */
+    /* 隐藏部署按钮和状态 */
+    .stDeployButton {display: none !important;}
+    .stAppDeployButton {display: none !important;}
+    .st-emotion-cache-1r6slb0 {display: none !important;}
     .st-emotion-cache-1v0mbdj {display: none !important;}
     .st-emotion-cache-1wmy9hl {display: none !important;}
-    .st-emotion-cache-1y4p8pa {display: none !important;}
+    .st-emotion-cache-17lhtej {display: none !important;}
     .st-emotion-cache-1dp5vir {display: none !important;}
     .st-emotion-cache-1avcm0n {display: none !important;}
-    .st-emotion-cache-1r6slb0 {display: none !important;}
-    .st-emotion-cache-17lhtej {display: none !important;}
     .st-emotion-cache-1vs7n35 {display: none !important;}
     .st-emotion-cache-1dte5yh {display: none !important;}
     .st-emotion-cache-1gk3tl8 {display: none !important;}
+    .st-emotion-cache-1y4p8pa {display: none !important;}
     
-    /* 通用隐藏：所有包含 github 或 streamlit 的元素 */
-    [class*="github"] {display: none !important;}
-    [class*="streamlit"] {display: none !important;}
-    [class*="deploy"] {display: none !important;}
-    [class*="badge"] {display: none !important;}
+    /* 隐藏任何包含 GitHub 或 Streamlit 的元素 */
+    [data-testid="stStatusWidget"] {display: none !important;}
+    [data-testid="baseButton-header"] {display: none !important;}
+    [data-testid="baseButton-header-noPadding"] {display: none !important;}
     
-    /* 底部任何文本 */
-    .st-emotion-cache-1r6slb0, 
-    .st-emotion-cache-1v0mbdj,
-    .st-emotion-cache-1wmy9hl,
-    .st-emotion-cache-17lhtej,
-    .st-emotion-cache-1dp5vir {
-        display: none !important;
+    /* 底部强制隐藏 */
+    .viewerBadge_container__1QSob {display: none !important;}
+    .stApp > div:last-child {display: none !important;}
+    
+    /* 移动端专用：隐藏底部footer */
+    @media (max-width: 768px) {
+        footer {display: none !important;}
+        .st-emotion-cache-1r6slb0 {display: none !important;}
+        .st-emotion-cache-1v0mbdj {display: none !important;}
+        .st-emotion-cache-1wmy9hl {display: none !important;}
+        .st-emotion-cache-17lhtej {display: none !important;}
+        .st-emotion-cache-1dp5vir {display: none !important;}
+        .st-emotion-cache-1avcm0n {display: none !important;}
     }
-    </style>
-"""
-st.markdown(hide_streamlit_style, unsafe_allow_html=True)
+</style>
+
+<script>
+    // 等待页面加载完成后移除所有底部元素
+    setTimeout(function() {
+        // 移除所有可能的底部元素
+        var elements = document.querySelectorAll(
+            'footer, .stDeployButton, .viewerBadge_container__1QSob, ' +
+            '[data-testid="stStatusWidget"], .st-emotion-cache-1r6slb0, ' +
+            '.st-emotion-cache-1v0mbdj, .st-emotion-cache-1wmy9hl, ' +
+            '.st-emotion-cache-17lhtej, .st-emotion-cache-1dp5vir'
+        );
+        elements.forEach(function(el) {
+            if (el) el.remove();
+        });
+        
+        // 移除任何包含 github 或 streamlit 的元素
+        var all = document.querySelectorAll('*');
+        all.forEach(function(el) {
+            if (el.innerText && (el.innerText.includes('GitHub') || 
+                el.innerText.includes('Streamlit') || 
+                el.innerText.includes('deploy') ||
+                el.innerText.includes('Created by'))) {
+                if (el.tagName !== 'BODY' && el.tagName !== 'HTML') {
+                    el.style.display = 'none';
+                }
+            }
+        });
+    }, 500);
+</script>
+""", unsafe_allow_html=True)
 
 # ============================================================
 # 🎨 自定义CSS（专业黄金主题）
