@@ -24,8 +24,7 @@ st.set_page_config(
     layout="wide"
 )
 
-st.title("📊 黄金 XAUUSD AI 交易系统")
-st.markdown("基于随机森林 AI 模型的实时交易信号")
+st.title("📊 TOKONG黄金交易")
 
 # ============================================================
 # 加载AI模型
