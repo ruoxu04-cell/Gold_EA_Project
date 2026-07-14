@@ -23,6 +23,21 @@ st.set_page_config(
     layout="wide"
 )
 
+hide_streamlit_style = """
+    <style>
+    #MainMenu {visibility: hidden;}
+    footer {visibility: hidden;}
+    header {visibility: hidden;}
+    .viewerBadge_container__1QSob {display: none !important;}
+    .stDeployButton {display: none !important;}
+    .stAppViewContainer .stDeployButton {display: none !important;}
+    [data-testid="stStatusWidget"] {display: none !important;}
+    .stApp > header {display: none !important;}
+    .stApp > div:last-child {display: none !important;}
+    </style>
+"""
+st.markdown(hide_streamlit_style, unsafe_allow_html=True)
+
 # ============================================================
 # 🎨 自定义CSS（专业黄金主题）
 # ============================================================
