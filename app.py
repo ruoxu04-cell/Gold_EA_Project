@@ -61,25 +61,42 @@ if model is None:
 # ============================================================
 @st.cache_data(ttl=30)
 def get_realtime_price():
-    """使用 Yadio API 获取实时黄金价格（完全免费，无需注册）"""
+    """使用可靠的免费API获取实时黄金价格"""
     
-    # Yadio API（免费，无需注册，稳定）
+    # 备选方案1: 使用Gold-API (免费，无需注册，较稳定)
     try:
-        url = "https://api.yadio.io/rates/XAU.json"
+        url = "https://www.gold-api.com/price/XAU"
         response = requests.get(url, timeout=10)
         if response.status_code == 200:
             data = response.json()
-            price = data.get('XAU', {}).get('USD')
+            price = data.get('price')
             if price:
-                return float(price), "Yadio API"
+                return float(price), "Gold-API (实时)"
     except Exception as e:
-        print(f"Yadio API 获取失败: {e}")
+        print(f"Gold-API 获取失败: {e}")
     
-    # 备用：模拟数据
+    # 备选方案2: 使用ExchangeRate-API的黄金数据 (免费，无需注册)
+    try:
+        url = "https://api.exchangerate-api.com/v4/latest/USD"
+        response = requests.get(url, timeout=10)
+        if response.status_code == 200:
+            data = response.json()
+            # 注意：此API返回的金价通常是1盎司黄金的美元价格
+            price = data.get('rates', {}).get('XAU')
+            if price:
+                # 如果返回的是1/XAU格式，需要转换
+                if price < 1:
+                    price = 1 / price
+                return float(price), "ExchangeRate-API"
+    except Exception as e:
+        print(f"ExchangeRate-API 获取失败: {e}")
+    
+    # 最后的备用方案：模拟数据
     seed = int(time.time() / 30)
     np.random.seed(seed)
-    base_price = 2420 + np.random.randn() * 2
-    return float(base_price), "模拟数据 ⚠️"
+    # 让模拟数据更接近真实值，在4000附近波动
+    base_price = 4000 + np.random.randn() * 10
+    return float(base_price), "模拟数据 ⚠️ (请检查网络)"
 
 @st.cache_data(ttl=60)
 def get_historical_data():
