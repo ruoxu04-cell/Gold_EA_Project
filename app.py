@@ -16,6 +16,11 @@ import time
 import json
 
 # ============================================================
+# 导入自动刷新库
+# ============================================================
+from streamlit_autorefresh import st_autorefresh
+
+# ============================================================
 # 页面配置
 # ============================================================
 st.set_page_config(
@@ -26,6 +31,11 @@ st.set_page_config(
 
 st.title("📊 黄金 XAUUSD AI 交易系统")
 st.markdown("基于随机森林 AI 模型的实时交易信号")
+
+# ============================================================
+# 🔄 自动刷新：每30秒刷新一次页面
+# ============================================================
+st_autorefresh(interval=30000, key="gold_price_refresh")
 
 # ============================================================
 # 加载AI模型
@@ -51,19 +61,29 @@ if model is None:
 # ============================================================
 @st.cache_data(ttl=30)
 def get_realtime_price():
-    """使用 Twelve Data API 获取实时黄金价格"""
+    """使用免费 API 获取实时黄金价格"""
     
-    # 把你的 API Key 填在这里
-    API_KEY = "b3b8143cd542493b9de1fb5aa13a9d07"  # ← 去 twelvedata.com 注册获取
-    
+    # API 1: Yadio（完全免费，无需注册）
     try:
-        url = f"https://api.twelvedata.com/price?symbol=XAU/USD&apikey={API_KEY}"
+        url = "https://api.yadio.io/rates/XAU.json"
+        response = requests.get(url, timeout=10)
+        if response.status_code == 200:
+            data = response.json()
+            price = data.get('XAU', {}).get('USD')
+            if price:
+                return float(price), "Yadio API"
+    except:
+        pass
+    
+    # API 2: Gold-API（完全免费，无需注册）
+    try:
+        url = "https://www.gold-api.com/price/XAU"
         response = requests.get(url, timeout=10)
         if response.status_code == 200:
             data = response.json()
             price = data.get('price')
             if price:
-                return float(price), "Twelve Data"
+                return float(price), "Gold-API"
     except:
         pass
     
@@ -207,9 +227,9 @@ with col4:
     )
 
 # ============================================================
-# 👇 新增：概率条（在4列下方）
+# 👇 概率条（在4列下方）
 # ============================================================
-st.markdown("---")  # 分割线
+st.markdown("---")
 
 # 计算概率
 up_prob = prob * 100
@@ -368,7 +388,7 @@ with col_footer1:
     st.caption(f"📊 AI模型：{model_type}")
 
 with col_footer2:
-    st.caption("📡 数据来源：API (Yadio)")
+    st.caption("📡 数据来源：免费API")
 
 with col_footer3:
     st.caption("⚠️ 仅供参考，不构成投资建议")
