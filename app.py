@@ -341,12 +341,10 @@ st.markdown('<p class="sub-title">智能黄金交易决策系统 · 实时AI分�
 # ============================================================
 # 状态栏
 # ============================================================
-col_status1, col_status2, col_status3 = st.columns(3)
+col_status1, col_status2 = st.columns(2)
 with col_status1:
     st.markdown(f'<span class="status-badge status-online">● 系统在线</span>', unsafe_allow_html=True)
 with col_status2:
-    st.caption(f"📡 {data_source}")
-with col_status3:
     st.caption(f"🕐 {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
 
 st.markdown('<hr class="gold-divider">', unsafe_allow_html=True)
@@ -590,7 +588,6 @@ st.plotly_chart(fig, use_container_width=True)
 st.markdown("""
 <div class="footer">
     <p>🏆 TOKONG黄金交易 · 智能决策系统</p>
-    <p>AI模型：随机森林 · 数据来源：实时市场API</p>
     <p style="color:#2d3850;">⚠️ 仅供参考，不构成投资建议 · 交易有风险，请谨慎决策</p>
 </div>
 """, unsafe_allow_html=True)
