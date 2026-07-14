@@ -370,5 +370,3 @@ with col_footer2:
 
 with col_footer3:
     st.caption("⚠️ 仅供参考，不构成投资建议")
-
-st.caption("🔄 页面每30秒自动刷新数据")
