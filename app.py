@@ -23,8 +23,12 @@ st.set_page_config(
     layout="wide"
 )
 
+# ============================================================
+# 🛡️ 隐藏 GitHub 和 Streamlit 标识（电脑+手机全平台）
+# ============================================================
 hide_streamlit_style = """
     <style>
+    /* 电脑版隐藏 */
     #MainMenu {visibility: hidden;}
     footer {visibility: hidden;}
     header {visibility: hidden;}
@@ -34,6 +38,33 @@ hide_streamlit_style = """
     [data-testid="stStatusWidget"] {display: none !important;}
     .stApp > header {display: none !important;}
     .stApp > div:last-child {display: none !important;}
+    
+    /* 手机版隐藏 */
+    .st-emotion-cache-1v0mbdj {display: none !important;}
+    .st-emotion-cache-1wmy9hl {display: none !important;}
+    .st-emotion-cache-1y4p8pa {display: none !important;}
+    .st-emotion-cache-1dp5vir {display: none !important;}
+    .st-emotion-cache-1avcm0n {display: none !important;}
+    .st-emotion-cache-1r6slb0 {display: none !important;}
+    .st-emotion-cache-17lhtej {display: none !important;}
+    .st-emotion-cache-1vs7n35 {display: none !important;}
+    .st-emotion-cache-1dte5yh {display: none !important;}
+    .st-emotion-cache-1gk3tl8 {display: none !important;}
+    
+    /* 通用隐藏：所有包含 github 或 streamlit 的元素 */
+    [class*="github"] {display: none !important;}
+    [class*="streamlit"] {display: none !important;}
+    [class*="deploy"] {display: none !important;}
+    [class*="badge"] {display: none !important;}
+    
+    /* 底部任何文本 */
+    .st-emotion-cache-1r6slb0, 
+    .st-emotion-cache-1v0mbdj,
+    .st-emotion-cache-1wmy9hl,
+    .st-emotion-cache-17lhtej,
+    .st-emotion-cache-1dp5vir {
+        display: none !important;
+    }
     </style>
 """
 st.markdown(hide_streamlit_style, unsafe_allow_html=True)
