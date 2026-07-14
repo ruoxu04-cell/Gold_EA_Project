@@ -634,8 +634,6 @@ st.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
-import streamlit as st
-
 # 在页面最底部加入
 st.markdown("""
 <script>
