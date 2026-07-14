@@ -1,5 +1,5 @@
 """
-黄金AI交易系统 - 完整专业版
+黄金AI交易系统 - 价格居中版
 """
 
 import streamlit as st
@@ -10,7 +10,6 @@ import plotly.graph_objects as go
 from datetime import datetime, timedelta
 import requests
 import time
-import json
 
 # ============================================================
 # 页面配置
@@ -22,7 +21,7 @@ st.set_page_config(
 )
 
 # ============================================================
-# 自定义CSS（专业黄金主题）
+# 自定义CSS
 # ============================================================
 st.markdown("""
 <style>
@@ -31,24 +30,54 @@ st.markdown("""
         background: linear-gradient(135deg, #0a0e1a 0%, #1a1a2e 50%, #16213e 100%);
     }
     
-    /* 主标题 */
+    /* 顶部标题行 */
+    .header-container {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 10px 0 5px 0;
+        border-bottom: 1px solid rgba(255,215,0,0.1);
+    }
     .main-title {
-        text-align: center;
-        padding: 20px 0 10px 0;
         background: linear-gradient(90deg, #f7971e, #ffd200);
         -webkit-background-clip: text;
         -webkit-text-fill-color: transparent;
-        font-size: 48px;
+        font-size: 32px;
         font-weight: 800;
         letter-spacing: 2px;
     }
-    
-    .sub-title {
-        text-align: center;
+    .header-time {
         color: #8892b0;
         font-size: 14px;
-        margin-bottom: 20px;
-        letter-spacing: 3px;
+    }
+    
+    /* 价格居中 */
+    .price-center {
+        text-align: center;
+        padding: 20px 0 15px 0;
+    }
+    .price-label {
+        color: #8892b0;
+        font-size: 14px;
+        text-transform: uppercase;
+        letter-spacing: 2px;
+    }
+    .price-display {
+        font-size: 48px;
+        font-weight: 700;
+        color: #ffffff;
+        text-shadow: 0 0 40px rgba(247,151,30,0.2);
+        line-height: 1.3;
+    }
+    .price-change-positive {
+        color: #00ff88;
+        font-size: 18px;
+        font-weight: 600;
+    }
+    .price-change-negative {
+        color: #ff4757;
+        font-size: 18px;
+        font-weight: 600;
     }
     
     /* 品牌卡片 */
@@ -56,7 +85,7 @@ st.markdown("""
         background: rgba(255,255,255,0.03);
         border: 1px solid rgba(255,215,0,0.12);
         border-radius: 16px;
-        padding: 18px 14px;
+        padding: 16px 14px;
         backdrop-filter: blur(10px);
         box-shadow: 0 8px 32px rgba(0,0,0,0.3);
         transition: all 0.3s ease;
@@ -77,31 +106,13 @@ st.markdown("""
     }
     .metric-value {
         color: #ffffff;
-        font-size: 28px;
+        font-size: 26px;
         font-weight: 700;
         margin: 4px 0 2px 0;
     }
     .metric-sub {
         color: #8892b0;
         font-size: 14px;
-    }
-    
-    /* 价格 */
-    .price-display {
-        font-size: 38px;
-        font-weight: 700;
-        color: #ffffff;
-        text-shadow: 0 0 30px rgba(247,151,30,0.15);
-    }
-    .price-change-positive {
-        color: #00ff88;
-        font-size: 16px;
-        font-weight: 600;
-    }
-    .price-change-negative {
-        color: #ff4757;
-        font-size: 16px;
-        font-weight: 600;
     }
     
     /* 信号标签 */
@@ -138,7 +149,7 @@ st.markdown("""
         border: none;
         height: 2px;
         background: linear-gradient(90deg, transparent, #f7971e, #ffd200, #f7971e, transparent);
-        margin: 25px 0;
+        margin: 15px 0;
     }
     
     /* 交易建议卡片 */
@@ -181,19 +192,16 @@ st.markdown("""
         margin-top: 30px;
     }
     
-    /* 进度条 */
     .stProgress > div > div {
         background: linear-gradient(90deg, #f7971e, #ffd200) !important;
         border-radius: 10px !important;
     }
     
-    /* 隐藏品牌 */
     #MainMenu {visibility: hidden;}
     footer {visibility: hidden;}
     header {visibility: hidden;}
     .stDeployButton {display: none !important;}
     [data-testid="stStatusWidget"] {display: none !important;}
-    .viewerBadge_container__1QSob {display: none !important;}
 </style>
 """, unsafe_allow_html=True)
 
@@ -207,13 +215,13 @@ def load_model():
         scaler = joblib.load('scaler.pkl')
         return model, scaler, "随机森林"
     except Exception as e:
-        st.warning(f"⚠️ 模型加载失败，使用简化模式")
+        st.warning("⚠️ 模型加载失败，使用简化模式")
         return None, None, "未加载"
 
 model, scaler, model_type = load_model()
 
 # ============================================================
-# 获取实时黄金价格（多个API备用）
+# 获取实时黄金价格
 # ============================================================
 @st.cache_data(ttl=30)
 def get_realtime_price():
@@ -258,18 +266,7 @@ def get_realtime_price():
     except:
         pass
     
-    # 备用：使用历史数据中的真实价格
-    try:
-        # 从历史CSV读取最新价格
-        df_hist = pd.read_csv('XAUUSD_H1_with_indicators.csv')
-        if len(df_hist) > 0:
-            last_price = df_hist['Close'].iloc[-1]
-            if last_price > 1000:
-                return float(last_price), "历史数据"
-    except:
-        pass
-    
-    # 最后备用：模拟数据（4000附近）
+    # 备用：模拟数据
     seed = int(time.time() / 30)
     np.random.seed(seed)
     base_price = 4000 + np.random.randn() * 5
@@ -295,39 +292,30 @@ def get_historical_data():
         'Low': prices * (1 - np.abs(np.random.normal(0, 0.0003, hours))),
         'Volume': np.random.randint(50, 500, hours)
     })
-    # 计算技术指标
     df = calculate_indicators(df)
     return df, current_price, source
 
 def calculate_indicators(df):
-    # MACD
     exp1 = df['Close'].ewm(span=12, adjust=False).mean()
     exp2 = df['Close'].ewm(span=26, adjust=False).mean()
     df['MACD'] = exp1 - exp2
     df['MACD_Signal'] = df['MACD'].ewm(span=9, adjust=False).mean()
     df['MACD_Histogram'] = df['MACD'] - df['MACD_Signal']
-    
-    # RSI
     delta = df['Close'].diff()
     gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
     loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
     rs = gain / loss
     df['RSI'] = 100 - (100 / (1 + rs))
-    
-    # 布林带
     df['MA20'] = df['Close'].rolling(window=20).mean()
     df['BB_Upper'] = df['MA20'] + (df['Close'].rolling(window=20).std() * 2)
     df['BB_Lower'] = df['MA20'] - (df['Close'].rolling(window=20).std() * 2)
     df['BB_Width'] = df['BB_Upper'] - df['BB_Lower']
-    
-    # ATR
     high_low = df['High'] - df['Low']
     high_close = np.abs(df['High'] - df['Close'].shift())
     low_close = np.abs(df['Low'] - df['Close'].shift())
     ranges = pd.concat([high_low, high_close, low_close], axis=1)
     true_range = np.max(ranges, axis=1)
     df['ATR'] = true_range.rolling(14).mean()
-    
     return df
 
 def ai_predict(df):
@@ -361,41 +349,41 @@ with st.spinner("🔄 正在获取实时数据..."):
     atr = latest.get('ATR', 12)
 
 # ============================================================
-# 显示主标题
+# 🏆 顶部：标题在左 + 时间在右
 # ============================================================
-st.markdown('<h1 class="main-title">🏆 TOKONG黄金交易</h1>', unsafe_allow_html=True)
-st.markdown('<p class="sub-title">智能黄金交易决策系统 · 实时AI分析</p>', unsafe_allow_html=True)
+col_title, col_time = st.columns([3, 1])
 
-# ============================================================
-# 状态栏
-# ============================================================
-col_status1, col_status2 = st.columns(2)
-with col_status1:
-    st.caption(f"📡 数据来源：{data_source}")
-with col_status2:
-    st.caption(f"🕐 更新时间：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+with col_title:
+    st.markdown('<span class="main-title">🏆 TOKONG黄金交易</span>', unsafe_allow_html=True)
+
+with col_time:
+    st.markdown(f'<p style="text-align:right;color:#8892b0;font-size:14px;margin-top:10px;">🕐 {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}</p>', unsafe_allow_html=True)
 
 st.markdown('<hr class="gold-divider">', unsafe_allow_html=True)
 
 # ============================================================
-# 4个核心指标
+# 💰 实时价格（居中显示）
 # ============================================================
-col1, col2, col3, col4 = st.columns(4)
-
 price_change = current_price - df['Close'].iloc[-2] if len(df) > 1 else 0
 change_symbol = "▲" if price_change >= 0 else "▼"
 change_color = "price-change-positive" if price_change >= 0 else "price-change-negative"
 
-with col1:
-    st.markdown(f"""
-    <div class="brand-card">
-        <div class="metric-label">💰 实时价格</div>
-        <div class="price-display">${current_price:,.2f}</div>
-        <div class="{change_color}">{change_symbol} ${abs(price_change):.2f}</div>
-    </div>
-    """, unsafe_allow_html=True)
+st.markdown(f"""
+<div class="price-center">
+    <div class="price-label">💰 实时价格</div>
+    <div class="price-display">${current_price:,.2f}</div>
+    <div class="{change_color}">{change_symbol} ${abs(price_change):.2f}</div>
+</div>
+""", unsafe_allow_html=True)
 
-with col2:
+st.markdown('<hr class="gold-divider">', unsafe_allow_html=True)
+
+# ============================================================
+# 📊 RSI + MACD + AI信号（三列）
+# ============================================================
+col_rsi, col_macd, col_ai = st.columns(3)
+
+with col_rsi:
     rsi_val = latest.get('RSI', 50)
     rsi_status = "超买 🔴" if rsi_val > 70 else "超卖 🟢" if rsi_val < 30 else "中性 ⚪"
     st.markdown(f"""
@@ -406,7 +394,7 @@ with col2:
     </div>
     """, unsafe_allow_html=True)
 
-with col3:
+with col_macd:
     macd_val = latest.get('MACD', 0)
     signal_val = latest.get('MACD_Signal', 0)
     macd_status = "多头 📈" if macd_val > signal_val else "空头 📉"
@@ -418,7 +406,7 @@ with col3:
     </div>
     """, unsafe_allow_html=True)
 
-with col4:
+with col_ai:
     signal_class = "signal-bullish" if prob > 0.6 else "signal-bearish" if prob < 0.4 else "signal-neutral"
     signal_text = "看涨 📈" if prob > 0.6 else "看跌 📉" if prob < 0.4 else "观望 ⏸️"
     st.markdown(f"""
