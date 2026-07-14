@@ -173,8 +173,6 @@ with col_status1:
     st.caption(f"📡 数据来源：{data_source}")
 with col_status2:
     st.caption(f"🕐 更新时间：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-with col_status3:
-    st.caption("🔄 每30秒自动刷新")
 
 # ============================================================
 # 4个核心指标 + 下方概率条
