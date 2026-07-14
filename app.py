@@ -24,7 +24,7 @@ st.set_page_config(
 )
 
 # ============================================================
-# 🛡️ 隐藏 Streamlit 和 GitHub 标识（全平台）
+# 🛡️ 隐藏 Streamlit 和 GitHub 标识（只用CSS）
 # ============================================================
 st.markdown("""
 <style>
@@ -67,35 +67,6 @@ st.markdown("""
         .st-emotion-cache-1avcm0n {display: none !important;}
     }
 </style>
-
-<script>
-    // 等待页面加载完成后移除所有底部元素
-    setTimeout(function() {
-        // 移除所有可能的底部元素
-        var elements = document.querySelectorAll(
-            'footer, .stDeployButton, .viewerBadge_container__1QSob, ' +
-            '[data-testid="stStatusWidget"], .st-emotion-cache-1r6slb0, ' +
-            '.st-emotion-cache-1v0mbdj, .st-emotion-cache-1wmy9hl, ' +
-            '.st-emotion-cache-17lhtej, .st-emotion-cache-1dp5vir'
-        );
-        elements.forEach(function(el) {
-            if (el) el.remove();
-        });
-        
-        // 移除任何包含 github 或 streamlit 的元素
-        var all = document.querySelectorAll('*');
-        all.forEach(function(el) {
-            if (el.innerText && (el.innerText.includes('GitHub') || 
-                el.innerText.includes('Streamlit') || 
-                el.innerText.includes('deploy') ||
-                el.innerText.includes('Created by'))) {
-                if (el.tagName !== 'BODY' && el.tagName !== 'HTML') {
-                    el.style.display = 'none';
-                }
-            }
-        });
-    }, 500);
-</script>
 """, unsafe_allow_html=True)
 
 # ============================================================
@@ -661,28 +632,4 @@ st.markdown("""
     <p>🏆 GS黄金交易</p>
     <p style="color:#2d3850;">⚠️ 仅供参考，不构成投资建议 · 交易有风险，请谨慎决策</p>
 </div>
-""", unsafe_allow_html=True)
-
-# 在页面最底部加入
-st.markdown("""
-<script>
-    // 等待页面加载完成后移除所有底部元素
-    setTimeout(function() {
-        // 移除所有可能的底部元素
-        var elements = document.querySelectorAll('footer, .stDeployButton, .viewerBadge_container__1QSob, [data-testid="stStatusWidget"], .st-emotion-cache-1r6slb0, .st-emotion-cache-1v0mbdj');
-        elements.forEach(function(el) {
-            if (el) el.remove();
-        });
-        
-        // 移除任何包含 github 或 streamlit 的元素
-        var all = document.querySelectorAll('*');
-        all.forEach(function(el) {
-            if (el.innerText && (el.innerText.includes('GitHub') || el.innerText.includes('Streamlit') || el.innerText.includes('deploy'))) {
-                if (el.tagName !== 'BODY' && el.tagName !== 'HTML') {
-                    el.style.display = 'none';
-                }
-            }
-        });
-    }, 1000);
-</script>
 """, unsafe_allow_html=True)
