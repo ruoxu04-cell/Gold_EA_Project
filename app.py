@@ -163,11 +163,11 @@ def demo_data(periods: int = 200) -> pd.DataFrame:
     )
 
 
-@st.cache_data(ttl=60, show_spinner=False)
-def load_candles(key: str) -> tuple[pd.DataFrame, str]:
-    """读取 Twelve Data XAU/USD 小时 K 线；失败时返回明确标示的演示数据。"""
-    if not key:
-        return demo_data(), "演示数据（未配置 API 密钥）"
+@st.cache_data(ttl=30, show_spinner=False)
+def load_candles(key: str) -> tuple[pd.DataFrame, str, float | None]:
+    """读取小时 K 线和独立实时价；失败时不伪造报价。"""
+    if not key or "粘贴在这里" in key:
+        return pd.DataFrame(), "请先在代码顶部填入有效的 Twelve Data API Key。", None
     try:
         response = requests.get(
             "https://api.twelvedata.com/time_series",
@@ -188,9 +188,18 @@ def load_candles(key: str) -> tuple[pd.DataFrame, str]:
         frame = frame.dropna(subset=["Open", "High", "Low", "Close"])
         if len(frame) < 50:
             raise ValueError("可用 K 线数量不足")
-        return frame, "Twelve Data（1 小时 K 线）"
-    except (requests.RequestException, ValueError, KeyError) as exc:
-        return demo_data(), f"演示数据（实时数据读取失败：{exc}）"
+        quote = requests.get(
+            "https://api.twelvedata.com/price",
+            params={"symbol": "XAU/USD", "apikey": key}, timeout=12,
+        )
+        quote.raise_for_status()
+        quote_data = quote.json()
+        live_price = float(quote_data["price"])
+        if live_price <= 0:
+            raise ValueError("实时价格无效")
+        return frame, "Twelve Data（实时价 + 1 小时 K 线）", live_price
+    except (requests.RequestException, ValueError, KeyError, TypeError) as exc:
+        return pd.DataFrame(), f"无法取得真实行情：{exc}", None
 
 
 def add_indicators(frame: pd.DataFrame) -> pd.DataFrame:
@@ -307,7 +316,14 @@ with st.sidebar:
         st.rerun()
 
 with st.spinner("正在读取市场数据…"):
-    raw, source = load_candles(api_key())
+    raw, source, live_price = load_candles(api_key())
+
+if raw.empty or live_price is None:
+    st.error(source)
+    st.info("请确认 API Key 有效、套餐支持 XAU/USD，并在一分钟后点击“刷新数据”。不会使用模拟价格代替真实行情。")
+    st.stop()
+
+with st.spinner("正在计算技术指标…"):
     df = add_indicators(raw)
 
 if df.empty:
@@ -316,17 +332,14 @@ if df.empty:
 
 latest, previous = df.iloc[-1], df.iloc[-2]
 signal = score_signal(df, confidence_threshold)
-price_change = latest.Close - previous.Close
-is_demo = source.startswith("演示数据")
+current_price = live_price
+price_change = current_price - latest.Close
 
 st.markdown('<div class="hero">🏆 TOKONG 黄金市场观察</div>', unsafe_allow_html=True)
-if is_demo:
-    st.warning(f"当前为 {source}。页面不会将此数据作为实时行情或交易依据。")
-else:
-    st.caption(f"数据来源：{source} · 最后一根 K 线：{df.index[-1].strftime('%Y-%m-%d %H:%M UTC')}")
+st.caption(f"数据来源：{source} · 最近一根小时 K 线：{df.index[-1].strftime('%Y-%m-%d %H:%M UTC')}")
 
 a, b, c, d = st.columns(4)
-a.metric("XAU/USD 收盘价", f"${latest.Close:,.2f}", f"{price_change:+.2f}")
+a.metric("XAU/USD 实时价格", f"${current_price:,.2f}", f"相对最近小时收盘 {price_change:+.2f}")
 b.metric("RSI (14)", f"{latest.RSI:.1f}")
 c.metric("ATR (14)", f"${latest.ATR:,.2f}")
 d.metric("规则评分", f"{signal.confidence:.0f}%", signal.direction)
@@ -352,15 +365,15 @@ with right:
     for reason in signal.reasons:
         st.write(f"• {reason}")
 
-    if signal.direction != "观望" and not is_demo:
-        stop, target, rr = trade_levels(latest.Close, latest.ATR, signal.direction)
+    if signal.direction != "观望":
+        stop, target, rr = trade_levels(current_price, latest.ATR, signal.direction)
         max_loss = account_size * risk_pct / 100
         units = max_loss / abs(latest.Close - stop) if stop != latest.Close else 0
         st.markdown("**风险规划（教育示例）**")
         st.write(f"止损：${stop:,.2f} · 目标：${target:,.2f} · 风险收益比：1:{rr:.1f}")
         st.write(f"按最大亏损 ${max_loss:,.2f} 估算，仓位上限约 {units:.2f} 金衡盎司。")
     else:
-        st.info("当前不显示交易参数：评分不足或使用的是演示数据。")
+        st.info("当前不显示交易参数：规则评分不足。")
 
 st.markdown("---")
 st.markdown('<div class="notice">⚠️ 本工具仅供研究与教育用途，不构成投资建议，也不会执行或连接任何交易。黄金价格波动显著，请独立核实行情并自行承担决策风险。</div>', unsafe_allow_html=True)
