@@ -68,6 +68,8 @@ def init_database() -> None:
             conn.execute("ALTER TABLE users ADD COLUMN is_admin INTEGER DEFAULT 0")
         if "risk_pct" not in columns:
             conn.execute("ALTER TABLE users ADD COLUMN risk_pct REAL DEFAULT 1.0")
+        if "min_score" not in columns:
+            conn.execute("ALTER TABLE users ADD COLUMN min_score INTEGER DEFAULT 70")
         conn.execute("""INSERT INTO users (username, password_hash, approved, is_admin, created_at)
             VALUES (?, ?, 1, 1, ?)
             ON CONFLICT(username) DO UPDATE SET password_hash=excluded.password_hash,
@@ -106,6 +108,19 @@ def get_user_risk_pct(username: str) -> float:
 def set_user_risk_pct(user_id: int, risk_pct: float) -> None:
     with sqlite3.connect(DATABASE_PATH) as conn:
         conn.execute("UPDATE users SET risk_pct=? WHERE id=?", (risk_pct, user_id))
+
+
+def get_user_min_score(username: str) -> int:
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        user = conn.execute(
+            "SELECT min_score FROM users WHERE username=?", (username,)
+        ).fetchone()
+    return int(user[0]) if user and user[0] is not None else 70
+
+
+def set_user_min_score(user_id: int, min_score: int) -> None:
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        conn.execute("UPDATE users SET min_score=? WHERE id=?", (min_score, user_id))
 
 
 def session_is_active() -> bool:
@@ -301,22 +316,29 @@ with st.sidebar:
         st.caption("已通过的用户")
         with sqlite3.connect(DATABASE_PATH) as conn:
             active_users = conn.execute(
-                "SELECT id, username, risk_pct FROM users WHERE approved=1 AND is_admin=0 ORDER BY username"
+                "SELECT id, username, risk_pct, min_score FROM users WHERE approved=1 AND is_admin=0 ORDER BY username"
             ).fetchall()
         if not active_users:
             st.caption("目前没有其他已通过用户。")
-        for user_id, username, saved_risk_pct in active_users:
+        for user_id, username, saved_risk_pct, saved_min_score in active_users:
             st.write(f"👤 {username}")
-            risk_left, risk_right = st.columns([2, 1])
+            risk_left, score_left = st.columns(2)
             assigned_risk = risk_left.number_input(
                 "单笔风险上限 (%)", min_value=0.25, max_value=5.0,
                 value=float(saved_risk_pct or 1.0), step=0.25,
                 key=f"risk_{user_id}",
             )
-            if risk_right.button("保存比例", key=f"save_risk_{user_id}"):
+            assigned_score = score_left.number_input(
+                "最低评分门槛", min_value=60, max_value=85,
+                value=int(saved_min_score or 70), step=1,
+                key=f"score_{user_id}",
+            )
+            save_left, revoke_right = st.columns(2)
+            if save_left.button("保存设置", key=f"save_settings_{user_id}"):
                 set_user_risk_pct(user_id, assigned_risk)
+                set_user_min_score(user_id, assigned_score)
                 st.rerun()
-            if st.button("取消权限", key=f"revoke_{user_id}"):
+            if revoke_right.button("取消权限", key=f"revoke_{user_id}"):
                 with sqlite3.connect(DATABASE_PATH) as conn:
                     conn.execute("UPDATE users SET approved=0 WHERE id=?", (user_id,))
                 st.rerun()
@@ -327,9 +349,12 @@ with st.sidebar:
         confidence_threshold = st.slider("最低评分门槛", 60, 85, 70, help="未达到门槛时，只显示观望。")
         account_size = st.number_input("计算用账户规模（美元）", min_value=0.0, value=DEFAULT_ACCOUNT_SIZE, step=500.0)
     else:
-        confidence_threshold = 70
+        confidence_threshold = get_user_min_score(st.session_state.username)
         account_size = DEFAULT_ACCOUNT_SIZE
-        st.caption(f"你的单笔风险上限：{get_user_risk_pct(st.session_state.username):.2f}%（由管理员设置）")
+        st.caption(
+            f"你的单笔风险上限：{get_user_risk_pct(st.session_state.username):.2f}% · "
+            f"最低评分门槛：{confidence_threshold}%（均由管理员设置）"
+        )
     risk_pct = get_user_risk_pct(st.session_state.username)
     if st.button("刷新数据", use_container_width=True):
         load_candles.clear()
