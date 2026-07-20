@@ -17,7 +17,7 @@ import plotly.graph_objects as go
 import requests
 import streamlit as st
 
-TWELVE_DATA_API_KEY = "把你的新_API_Key_粘贴在这里"
+TWELVE_DATA_API_KEY = "b3b8143cd542493b9de1fb5aa13a9d07"
 
 st.set_page_config(page_title="TOKONG 黄金市场观察", page_icon="🏆", layout="wide")
 
