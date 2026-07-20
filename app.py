@@ -1,6 +1,6 @@
 """
-黄金交易系统 - 中文版 + 动态止盈
-根据市场趋势强度自动调整止盈大小
+黄金交易系统 - 中文版 + 动态止盈 + 概率分级
+根据AI信心度决定是否交易，不会乱引导
 """
 
 import streamlit as st
@@ -36,11 +36,13 @@ st.markdown("""
     .signal-bullish { background: #00ff8833; border: 1px solid #00ff88; border-radius: 8px; padding: 4px 16px; color: #00ff88; }
     .signal-bearish { background: #ff475733; border: 1px solid #ff4757; border-radius: 8px; padding: 4px 16px; color: #ff4757; }
     .signal-neutral { background: #ffd70033; border: 1px solid #ffd700; border-radius: 8px; padding: 4px 16px; color: #ffd700; }
+    .signal-wait { background: #8892b033; border: 1px solid #8892b0; border-radius: 8px; padding: 4px 16px; color: #8892b0; }
     .gold-divider { border: none; height: 2px; background: linear-gradient(90deg, transparent, #f7971e, #ffd200, #f7971e, transparent); margin: 15px 0; }
     .trade-card { background: rgba(255,255,255,0.03); border-radius: 12px; padding: 18px 22px; border-left: 4px solid #f7971e; }
     .trade-card-buy { border-left-color: #00ff88; background: rgba(0,255,136,0.05); }
     .trade-card-sell { border-left-color: #ff4757; background: rgba(255,71,87,0.05); }
     .trade-card-wait { border-left-color: #ffd700; background: rgba(255,215,0,0.05); }
+    .trade-card-neutral { border-left-color: #8892b0; background: rgba(136,146,176,0.05); }
     .footer { text-align: center; color: #495670; font-size: 12px; padding: 25px 0 10px 0; border-top: 1px solid rgba(255,255,255,0.05); margin-top: 30px; }
     #MainMenu {visibility: hidden;} footer {visibility: hidden;} header {visibility: hidden;} .stDeployButton {display: none !important;}
 </style>
@@ -317,8 +319,17 @@ with col_macd:
     """, unsafe_allow_html=True)
 
 with col_ai:
-    signal_class = "signal-bullish" if prob > 0.55 else "signal-bearish" if prob < 0.45 else "signal-neutral"
-    signal_text = "看涨 📈" if prob > 0.55 else "看跌 📉" if prob < 0.45 else "中性 ⏸️"
+    # 根据概率显示不同的信号标签
+    if prob >= 0.60:
+        signal_class = "signal-bullish"
+        signal_text = "看涨 📈"
+    elif prob <= 0.40:
+        signal_class = "signal-bearish"
+        signal_text = "看跌 📉"
+    else:
+        signal_class = "signal-wait"
+        signal_text = "观望 ⏸️"
+    
     st.markdown(f"""
     <div class="brand-card">
         <div class="metric-label">🤖 AI 信号</div>
@@ -345,15 +356,16 @@ with col_prob2:
     st.markdown(f"📉 **下跌概率：{down_prob:.1f}%**")
     st.progress(down_prob / 100)
 
-if prob > 0.55:
+# 根据概率显示不同的信号总结
+if prob >= 0.60:
     st.success(f"✅ **当前信号：看涨**（信心度：{up_prob:.0f}%）")
-elif prob < 0.45:
+elif prob <= 0.40:
     st.error(f"❌ **当前信号：看跌**（信心度：{down_prob:.0f}%）")
 else:
-    st.warning(f"⏸️ **当前信号：中性**（横盘震荡）")
+    st.warning(f"⏸️ **当前信号：观望**（信心度不足，暂不交易）")
 
 # ============================================================
-# 交易建议 + 市场状态
+# 交易建议（概率分级版 - 不会乱引导）
 # ============================================================
 st.markdown('<hr class="gold-divider">', unsafe_allow_html=True)
 
@@ -363,9 +375,15 @@ with col_trade:
     st.markdown('<p style="color:#f7971e;font-weight:700;font-size:16px;">🎯 交易建议</p>', unsafe_allow_html=True)
     
     # 显示当前市场状态
-    st.caption(f"📊 市场状态：{targets['take_style']} | 趋势强度：{targets['trend_strength']*100:.0f}%")
+    st.caption(f"📊 市场状态：{targets['take_style']} | 趋势强度：{targets['trend_strength']*100:.0f}% | AI信心度：{prob*100:.1f}%")
     
+    # ============================================================
+    # 🚨 概率分级判断（核心逻辑 - 不会乱引导）
+    # ============================================================
+    
+    # ----- 看涨方向 -----
     if prob >= 0.70:
+        # 强烈看涨 ✅
         st.markdown(f"""
         <div class="trade-card trade-card-buy">
             <div class="trade-title" style="color:#00ff88;">✅ 强烈建议 · 买入（做多）</div>
@@ -374,11 +392,13 @@ with col_trade:
             <div class="trade-row">├─ 止盈价：<strong style="color:#00ff88;">${targets['long_take']:.2f}</strong></div>
             <div class="trade-row">├─ 风险/收益比：<strong>1:{targets['long_rr']:.2f}</strong></div>
             <div class="trade-row">├─ 止盈倍数：<strong>{targets['take_multiplier']:.1f}x ATR</strong></div>
+            <div class="trade-row">├─ AI信心度：<strong style="color:#00ff88;">{prob*100:.1f}%</strong> ✅ 高信心</div>
             <div class="trade-row">└─ 建议仓位：<strong style="color:#ffd700;">2% 总资金</strong></div>
         </div>
         """, unsafe_allow_html=True)
         
-    elif prob >= 0.55:
+    elif 0.60 <= prob < 0.70:
+        # 轻度看涨 ⚠️
         st.markdown(f"""
         <div class="trade-card trade-card-buy">
             <div class="trade-title" style="color:#ffd700;">⚠️ 轻仓试多</div>
@@ -387,11 +407,26 @@ with col_trade:
             <div class="trade-row">├─ 止盈价：<strong style="color:#00ff88;">${targets['long_take']:.2f}</strong></div>
             <div class="trade-row">├─ 风险/收益比：<strong>1:{targets['long_rr']:.2f}</strong></div>
             <div class="trade-row">├─ 止盈倍数：<strong>{targets['take_multiplier']:.1f}x ATR</strong></div>
+            <div class="trade-row">├─ AI信心度：<strong style="color:#ffd700;">{prob*100:.1f}%</strong> ⚠️ 中等信心</div>
             <div class="trade-row">└─ 建议仓位：<strong style="color:#ffd700;">1% 总资金</strong></div>
         </div>
         """, unsafe_allow_html=True)
         
+    elif 0.55 <= prob < 0.60:
+        # 🚨 信心不足 → 不交易！
+        st.markdown(f"""
+        <div class="trade-card trade-card-wait">
+            <div class="trade-title" style="color:#ffd700;">⏸️ 建议：观望，暂不买入</div>
+            <div class="trade-row">├─ 原因：AI信心度不足（{prob*100:.1f}%），需大于60%才可入场</div>
+            <div class="trade-row">├─ 当前信号方向：看涨（但强度不够）</div>
+            <div class="trade-row">├─ 建议等待概率升至 <strong>60%</strong> 以上</div>
+            <div class="trade-row">└─ 或等待价格突破关键位后重新判断</div>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    # ----- 看跌方向 -----
     elif prob <= 0.30:
+        # 强烈看跌 ❌
         short_risk = targets['short_stop'] - current_price
         short_reward = current_price - targets['short_take']
         short_rr = short_reward / short_risk if short_risk > 0 else 0
@@ -403,11 +438,13 @@ with col_trade:
             <div class="trade-row">├─ 止盈价：<strong style="color:#00ff88;">${targets['short_take']:.2f}</strong></div>
             <div class="trade-row">├─ 风险/收益比：<strong>1:{short_rr:.2f}</strong></div>
             <div class="trade-row">├─ 止盈倍数：<strong>{targets['take_multiplier']:.1f}x ATR</strong></div>
+            <div class="trade-row">├─ AI信心度：<strong style="color:#ff4757;">{prob*100:.1f}%</strong> ✅ 高信心</div>
             <div class="trade-row">└─ 建议仓位：<strong style="color:#ffd700;">2% 总资金</strong></div>
         </div>
         """, unsafe_allow_html=True)
         
-    elif prob <= 0.45:
+    elif 0.30 < prob <= 0.40:
+        # 轻度看跌 ⚠️
         short_risk = targets['short_stop'] - current_price
         short_reward = current_price - targets['short_take']
         short_rr = short_reward / short_risk if short_risk > 0 else 0
@@ -419,18 +456,32 @@ with col_trade:
             <div class="trade-row">├─ 止盈价：<strong style="color:#00ff88;">${targets['short_take']:.2f}</strong></div>
             <div class="trade-row">├─ 风险/收益比：<strong>1:{short_rr:.2f}</strong></div>
             <div class="trade-row">├─ 止盈倍数：<strong>{targets['take_multiplier']:.1f}x ATR</strong></div>
+            <div class="trade-row">├─ AI信心度：<strong style="color:#ffd700;">{prob*100:.1f}%</strong> ⚠️ 中等信心</div>
             <div class="trade-row">└─ 建议仓位：<strong style="color:#ffd700;">1% 总资金</strong></div>
         </div>
         """, unsafe_allow_html=True)
         
-    else:
+    elif 0.40 < prob <= 0.45:
+        # 🚨 信心不足 → 不交易！
         st.markdown(f"""
         <div class="trade-card trade-card-wait">
-            <div class="trade-title" style="color:#ffd700;">🤔 观望 · 等待信号</div>
-            <div class="trade-row">市场方向不明</div>
-            <div class="trade-row">上涨概率：<strong>{prob*100:.1f}%</strong></div>
-            <div class="trade-row">趋势强度：<strong>{targets['trend_strength']*100:.0f}%</strong></div>
-            <div class="trade-row">等待价格突破关键位再交易</div>
+            <div class="trade-title" style="color:#ffd700;">⏸️ 建议：观望，暂不卖出</div>
+            <div class="trade-row">├─ 原因：AI信心度不足（{prob*100:.1f}%），需低于40%才可入场</div>
+            <div class="trade-row">├─ 当前信号方向：看跌（但强度不够）</div>
+            <div class="trade-row">├─ 建议等待概率降至 <strong>40%</strong> 以下</div>
+            <div class="trade-row">└─ 或等待价格跌破关键位后重新判断</div>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    else:
+        # 完全中性 → 绝对不交易
+        st.markdown(f"""
+        <div class="trade-card trade-card-neutral">
+            <div class="trade-title" style="color:#8892b0;">🤔 建议：观望，方向不明</div>
+            <div class="trade-row">├─ 原因：AI信号中性（{prob*100:.1f}%），市场方向不明</div>
+            <div class="trade-row">├─ 上涨概率：<strong>{prob*100:.1f}%</strong></div>
+            <div class="trade-row">├─ 下跌概率：<strong>{(1-prob)*100:.1f}%</strong></div>
+            <div class="trade-row">└─ 建议等待市场方向明朗后再交易</div>
         </div>
         """, unsafe_allow_html=True)
 
@@ -517,5 +568,6 @@ st.markdown("""
 <div class="footer">
     <p>🏆 TOKONG 黄金交易 · 智能决策系统</p>
     <p style="color:#2d3850;">⚠️ 仅供参考，不构成投资建议 · 交易有风险，请谨慎决策</p>
+    <p style="color:#1a2340;font-size:11px;">📌 只有当AI信心度 &gt; 60% 或 &lt; 40% 时才会给出交易建议</p>
 </div>
 """, unsafe_allow_html=True)
