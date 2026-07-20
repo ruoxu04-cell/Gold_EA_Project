@@ -37,6 +37,7 @@ OWNER_PASSWORD_HASH = (
     "af1166da60b40bfcde0dc1422c720b13$"
     "c37e4f6e6a785573c842b0185690a1ad57dab2d81e05805751cce76e7a2a61f6"
 )
+DEFAULT_ACCOUNT_SIZE = 10_000.0
 
 
 def hash_password(password: str, salt: bytes | None = None) -> str:
@@ -65,6 +66,8 @@ def init_database() -> None:
             conn.execute("ALTER TABLE users ADD COLUMN approved INTEGER DEFAULT 0")
         if "is_admin" not in columns:
             conn.execute("ALTER TABLE users ADD COLUMN is_admin INTEGER DEFAULT 0")
+        if "risk_pct" not in columns:
+            conn.execute("ALTER TABLE users ADD COLUMN risk_pct REAL DEFAULT 1.0")
         conn.execute("""INSERT INTO users (username, password_hash, approved, is_admin, created_at)
             VALUES (?, ?, 1, 1, ?)
             ON CONFLICT(username) DO UPDATE SET password_hash=excluded.password_hash,
@@ -90,6 +93,19 @@ def check_login(username: str, password: str) -> tuple[str, bool]:
     if not user[1]:
         return "pending", False
     return "success", bool(user[2])
+
+
+def get_user_risk_pct(username: str) -> float:
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        user = conn.execute(
+            "SELECT risk_pct FROM users WHERE username=?", (username,)
+        ).fetchone()
+    return float(user[0]) if user and user[0] is not None else 1.0
+
+
+def set_user_risk_pct(user_id: int, risk_pct: float) -> None:
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        conn.execute("UPDATE users SET risk_pct=? WHERE id=?", (risk_pct, user_id))
 
 
 def session_is_active() -> bool:
@@ -163,11 +179,11 @@ def demo_data(periods: int = 200) -> pd.DataFrame:
     )
 
 
-@st.cache_data(ttl=30, show_spinner=False)
-def load_candles(key: str) -> tuple[pd.DataFrame, str, float | None]:
-    """读取小时 K 线和独立实时价；失败时不伪造报价。"""
+@st.cache_data(ttl=60, show_spinner=False)
+def load_candles(key: str) -> tuple[pd.DataFrame, str]:
+    """读取 Twelve Data XAU/USD 小时 K 线；失败时明确标示演示数据。"""
     if not key or "粘贴在这里" in key:
-        return pd.DataFrame(), "请先在代码顶部填入有效的 Twelve Data API Key。", None
+        return demo_data(), "演示数据（未配置 API 密钥）"
     try:
         response = requests.get(
             "https://api.twelvedata.com/time_series",
@@ -188,18 +204,9 @@ def load_candles(key: str) -> tuple[pd.DataFrame, str, float | None]:
         frame = frame.dropna(subset=["Open", "High", "Low", "Close"])
         if len(frame) < 50:
             raise ValueError("可用 K 线数量不足")
-        quote = requests.get(
-            "https://api.twelvedata.com/price",
-            params={"symbol": "XAU/USD", "apikey": key}, timeout=12,
-        )
-        quote.raise_for_status()
-        quote_data = quote.json()
-        live_price = float(quote_data["price"])
-        if live_price <= 0:
-            raise ValueError("实时价格无效")
-        return frame, "Twelve Data（实时价 + 1 小时 K 线）", live_price
+        return frame, "Twelve Data（1 小时 K 线）"
     except (requests.RequestException, ValueError, KeyError, TypeError) as exc:
-        return pd.DataFrame(), f"无法取得真实行情：{exc}", None
+        return demo_data(), f"演示数据（实时数据读取失败：{exc}）"
 
 
 def add_indicators(frame: pd.DataFrame) -> pd.DataFrame:
@@ -294,36 +301,42 @@ with st.sidebar:
         st.caption("已通过的用户")
         with sqlite3.connect(DATABASE_PATH) as conn:
             active_users = conn.execute(
-                "SELECT id, username FROM users WHERE approved=1 AND is_admin=0 ORDER BY username"
+                "SELECT id, username, risk_pct FROM users WHERE approved=1 AND is_admin=0 ORDER BY username"
             ).fetchall()
         if not active_users:
             st.caption("目前没有其他已通过用户。")
-        for user_id, username in active_users:
-            left, right = st.columns([2, 1])
-            left.write(f"👤 {username}")
-            if right.button("取消权限", key=f"revoke_{user_id}"):
+        for user_id, username, saved_risk_pct in active_users:
+            st.write(f"👤 {username}")
+            risk_left, risk_right = st.columns([2, 1])
+            assigned_risk = risk_left.number_input(
+                "单笔风险上限 (%)", min_value=0.25, max_value=5.0,
+                value=float(saved_risk_pct or 1.0), step=0.25,
+                key=f"risk_{user_id}",
+            )
+            if risk_right.button("保存比例", key=f"save_risk_{user_id}"):
+                set_user_risk_pct(user_id, assigned_risk)
+                st.rerun()
+            if st.button("取消权限", key=f"revoke_{user_id}"):
                 with sqlite3.connect(DATABASE_PATH) as conn:
                     conn.execute("UPDATE users SET approved=0 WHERE id=?", (user_id,))
                 st.rerun()
 
     st.divider()
-    st.header("风险设置")
-    confidence_threshold = st.slider("最低评分门槛", 60, 85, 70, help="未达到门槛时，只显示观望。")
-    account_size = st.number_input("账户规模（美元）", min_value=0.0, value=10_000.0, step=500.0)
-    risk_pct = st.slider("每笔最大风险 (%)", 0.25, 2.0, 1.0, 0.25)
+    if st.session_state.get("is_admin"):
+        st.header("风险设置")
+        confidence_threshold = st.slider("最低评分门槛", 60, 85, 70, help="未达到门槛时，只显示观望。")
+        account_size = st.number_input("计算用账户规模（美元）", min_value=0.0, value=DEFAULT_ACCOUNT_SIZE, step=500.0)
+    else:
+        confidence_threshold = 70
+        account_size = DEFAULT_ACCOUNT_SIZE
+        st.caption(f"你的单笔风险上限：{get_user_risk_pct(st.session_state.username):.2f}%（由管理员设置）")
+    risk_pct = get_user_risk_pct(st.session_state.username)
     if st.button("刷新数据", use_container_width=True):
         load_candles.clear()
         st.rerun()
 
 with st.spinner("正在读取市场数据…"):
-    raw, source, live_price = load_candles(api_key())
-
-if raw.empty or live_price is None:
-    st.error(source)
-    st.info("请确认 API Key 有效、套餐支持 XAU/USD，并在一分钟后点击“刷新数据”。不会使用模拟价格代替真实行情。")
-    st.stop()
-
-with st.spinner("正在计算技术指标…"):
+    raw, source = load_candles(api_key())
     df = add_indicators(raw)
 
 if df.empty:
@@ -332,14 +345,17 @@ if df.empty:
 
 latest, previous = df.iloc[-1], df.iloc[-2]
 signal = score_signal(df, confidence_threshold)
-current_price = live_price
-price_change = current_price - latest.Close
+price_change = latest.Close - previous.Close
+is_demo = source.startswith("演示数据")
 
 st.markdown('<div class="hero">🏆 TOKONG 黄金市场观察</div>', unsafe_allow_html=True)
-st.caption(f"数据来源：{source} · 最近一根小时 K 线：{df.index[-1].strftime('%Y-%m-%d %H:%M UTC')}")
+if is_demo:
+    st.warning(f"当前为 {source}。页面不会将此数据作为实时行情或交易依据。")
+else:
+    st.caption(f"数据来源：{source} · 最后一根 K 线：{df.index[-1].strftime('%Y-%m-%d %H:%M UTC')}")
 
 a, b, c, d = st.columns(4)
-a.metric("XAU/USD 实时价格", f"${current_price:,.2f}", f"相对最近小时收盘 {price_change:+.2f}")
+a.metric("XAU/USD 收盘价", f"${latest.Close:,.2f}", f"{price_change:+.2f}")
 b.metric("RSI (14)", f"{latest.RSI:.1f}")
 c.metric("ATR (14)", f"${latest.ATR:,.2f}")
 d.metric("规则评分", f"{signal.confidence:.0f}%", signal.direction)
@@ -365,15 +381,15 @@ with right:
     for reason in signal.reasons:
         st.write(f"• {reason}")
 
-    if signal.direction != "观望":
-        stop, target, rr = trade_levels(current_price, latest.ATR, signal.direction)
+    if signal.direction != "观望" and not is_demo:
+        stop, target, rr = trade_levels(latest.Close, latest.ATR, signal.direction)
         max_loss = account_size * risk_pct / 100
         units = max_loss / abs(latest.Close - stop) if stop != latest.Close else 0
         st.markdown("**风险规划（教育示例）**")
         st.write(f"止损：${stop:,.2f} · 目标：${target:,.2f} · 风险收益比：1:{rr:.1f}")
         st.write(f"按最大亏损 ${max_loss:,.2f} 估算，仓位上限约 {units:.2f} 金衡盎司。")
     else:
-        st.info("当前不显示交易参数：规则评分不足。")
+        st.info("当前不显示交易参数：评分不足或使用的是演示数据。")
 
 st.markdown("---")
 st.markdown('<div class="notice">⚠️ 本工具仅供研究与教育用途，不构成投资建议，也不会执行或连接任何交易。黄金价格波动显著，请独立核实行情并自行承担决策风险。</div>', unsafe_allow_html=True)
