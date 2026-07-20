@@ -16,6 +16,7 @@ import pandas as pd
 import plotly.graph_objects as go
 import requests
 import streamlit as st
+from cryptography.fernet import Fernet, InvalidToken
 from streamlit_autorefresh import st_autorefresh
 
 TWELVE_DATA_API_KEY = "b3b8143cd542493b9de1fb5aa13a9d07"
@@ -40,6 +41,32 @@ OWNER_PASSWORD_HASH = (
 )
 DEFAULT_ACCOUNT_SIZE = 10_000.0
 DEFAULT_ACCESS_DAYS = 30
+
+
+def member_data_cipher() -> Fernet:
+    """Load the server-only key used to encrypt ID and MT5 passwords at rest."""
+    key = os.environ.get("MEMBER_DATA_ENCRYPTION_KEY")
+    if not key:
+        key = st.secrets.get("MEMBER_DATA_ENCRYPTION_KEY", None)
+    if not key:
+        raise RuntimeError("未配置 MEMBER_DATA_ENCRYPTION_KEY，无法安全保存敏感资料。")
+    try:
+        return Fernet(key.encode() if isinstance(key, str) else key)
+    except (TypeError, ValueError) as exc:
+        raise RuntimeError("MEMBER_DATA_ENCRYPTION_KEY 格式无效。") from exc
+
+
+def encrypt_member_data(value: str) -> str:
+    return member_data_cipher().encrypt(value.encode()).decode()
+
+
+def decrypt_member_data(value: str | None) -> str:
+    if not value:
+        return "未填写"
+    try:
+        return member_data_cipher().decrypt(value.encode()).decode()
+    except (InvalidToken, RuntimeError, ValueError):
+        return "无法读取（加密密钥不符或资料无效）"
 
 
 def hash_password(password: str, salt: bytes | None = None) -> str:
@@ -98,7 +125,8 @@ def init_database() -> None:
             is_admin INTEGER NOT NULL DEFAULT 0, expires_at TEXT,
             full_name TEXT, email TEXT, phone TEXT, country TEXT,
             trading_experience TEXT, registration_note TEXT,
-            id_number_hash TEXT, id_last4 TEXT, gender TEXT, region TEXT,
+            id_number_hash TEXT, id_last4 TEXT, id_number_encrypted TEXT,
+            mt5_account TEXT, mt5_password_encrypted TEXT, gender TEXT, region TEXT,
             invite_code TEXT, capital_range TEXT,
             needs_training INTEGER DEFAULT 0, provides_capital INTEGER DEFAULT 0,
             profit_share_pct REAL, profit_share_recipient TEXT,
@@ -121,6 +149,9 @@ def init_database() -> None:
             "registration_note": "TEXT",
             "id_number_hash": "TEXT",
             "id_last4": "TEXT",
+            "id_number_encrypted": "TEXT",
+            "mt5_account": "TEXT",
+            "mt5_password_encrypted": "TEXT",
             "gender": "TEXT",
             "region": "TEXT",
             "invite_code": "TEXT",
@@ -156,17 +187,18 @@ def create_user(username: str, password: str, profile: dict[str, object]) -> tup
                 return False, "此身份证／护照号码已经注册过。"
             conn.execute("""INSERT INTO users (
                     username, password_hash, full_name, id_number_hash, id_last4,
+                    id_number_encrypted, mt5_account, mt5_password_encrypted,
                     gender, region, country, invite_code, capital_range,
-                    needs_training, provides_capital, profit_share_pct,
-                    profit_share_recipient, withdrawal_method, currency, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""", (
+                    needs_training, provides_capital, withdrawal_method, currency, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""", (
                     username, hash_password(password), profile["full_name"],
-                    profile["id_number_hash"], profile["id_last4"], profile["gender"],
-                    profile["region"], profile["country"], profile["invite_code"],
-                    profile["capital_range"], profile["needs_training"],
-                    profile["provides_capital"], profile["profit_share_pct"],
-                    profile["profit_share_recipient"], profile["withdrawal_method"],
-                    profile["currency"], datetime.now(timezone.utc).isoformat(),
+                    profile["id_number_hash"], profile["id_last4"],
+                    profile["id_number_encrypted"], profile["mt5_account"],
+                    profile["mt5_password_encrypted"], profile["gender"],
+                    profile["region"], profile["country"], profile["invite_code"], profile["capital_range"],
+                    profile["needs_training"], profile["provides_capital"],
+                    profile["withdrawal_method"], profile["currency"],
+                    datetime.now(timezone.utc).isoformat(),
                 ))
         return True, "注册申请已提交，等待管理员审核。"
     except sqlite3.IntegrityError:
@@ -214,8 +246,18 @@ def set_user_min_score(user_id: int, min_score: int) -> None:
         conn.execute("UPDATE users SET min_score=? WHERE id=?", (min_score, user_id))
 
 
+def set_user_profit_share(user_id: int, profit_share_pct: float, recipient: str) -> None:
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        conn.execute(
+            "UPDATE users SET profit_share_pct=?, profit_share_recipient=? WHERE id=?",
+            (profit_share_pct, recipient, user_id),
+        )
+
+
 def show_member_profile(
-    full_name: str | None, id_last4: str | None, gender: str | None,
+    member_id: int, full_name: str | None, id_last4: str | None,
+    id_number_encrypted: str | None, mt5_account: str | None,
+    mt5_password_encrypted: str | None, gender: str | None,
     region: str | None, country: str | None, invite_code: str | None,
     capital_range: str | None, needs_training: int | None,
     provides_capital: int | None, profit_share_pct: float | None,
@@ -237,6 +279,11 @@ def show_member_profile(
     right.write(f"**分成对象：** {profit_share_recipient or '未填写'}")
     right.write(f"**出金方式：** {withdrawal_method or '未填写'}")
     right.write(f"**币种：** {currency or '未填写'}")
+    if st.toggle("显示完整身份证与 MT5 登录资料", key=f"sensitive_profile_{member_id}"):
+        st.warning("仅在必要时查看；请勿复制、分享或截图敏感资料。")
+        st.write(f"**完整身份证／护照：** {decrypt_member_data(id_number_encrypted)}")
+        st.write(f"**MT5 账号：** {mt5_account or '未填写'}")
+        st.write(f"**MT5 密码：** {decrypt_member_data(mt5_password_encrypted)}")
 
 
 def session_is_active() -> bool:
@@ -288,14 +335,11 @@ def login_required() -> None:
             region = st.text_input("地区／州")
             country = st.text_input("国家", value="Malaysia")
             invite_code = st.text_input("邀请码（如没有请填写：无）")
-            capital_range = st.selectbox(
-                "预计资金规模", ["请选择", "少于 1,000", "1,000–5,000", "5,001–10,000",
-                "10,001–50,000", "50,001–100,000", "100,000 以上"],
-            )
+            capital_range = st.text_input("资金规模（请自行填写，例如：USD 10,000）")
             needs_training = st.radio("是否需要教学", ["需要", "不需要"], horizontal=True)
             provides_capital = st.radio("是否提供资金", ["是", "否"], horizontal=True)
-            profit_share_pct = st.number_input("利润分成（%）", min_value=0.0, max_value=100.0, value=0.0, step=1.0)
-            profit_share_recipient = st.text_input("利润分成给谁（姓名／用户名；没有请填写：无）")
+            mt5_account = st.text_input("MT5 账号")
+            mt5_password = st.text_input("MT5 密码", type="password")
             withdrawal_method = st.selectbox("出金方式", ["请选择", "银行转账", "电子钱包", "加密货币", "其他"])
             currency = st.selectbox("币种", ["MYR", "USD", "SGD", "CNY", "USDT", "其他"])
             register = st.form_submit_button("提交注册申请")
@@ -311,14 +355,24 @@ def login_required() -> None:
                 st.error("请填写姓名和身份证／护照号码。")
             elif gender == "请选择" or not region.strip() or not country.strip():
                 st.error("请填写性别、地区和国家。")
-            elif capital_range == "请选择" or withdrawal_method == "请选择":
-                st.error("请完成资金规模和出金方式的选择。")
+            elif not capital_range.strip() or not mt5_account.strip() or not mt5_password:
+                st.error("请填写资金规模、MT5 账号和 MT5 密码。")
+            elif withdrawal_method == "请选择":
+                st.error("请选择出金方式。")
             else:
+                try:
+                    member_data_cipher()
+                except RuntimeError as exc:
+                    st.error(str(exc))
+                    st.stop()
                 normalized_id = re.sub(r"\s+", "", id_number).upper()
                 profile = {
                     "full_name": full_name.strip(),
                     "id_number_hash": hashlib.sha256(normalized_id.encode()).hexdigest(),
                     "id_last4": normalized_id[-4:],
+                    "id_number_encrypted": encrypt_member_data(normalized_id),
+                    "mt5_account": mt5_account.strip(),
+                    "mt5_password_encrypted": encrypt_member_data(mt5_password),
                     "gender": gender,
                     "region": region.strip(),
                     "country": country.strip(),
@@ -326,8 +380,6 @@ def login_required() -> None:
                     "capital_range": capital_range,
                     "needs_training": int(needs_training == "需要"),
                     "provides_capital": int(provides_capital == "是"),
-                    "profit_share_pct": float(profit_share_pct),
-                    "profit_share_recipient": profit_share_recipient.strip() or "无",
                     "withdrawal_method": withdrawal_method,
                     "currency": currency,
                 }
@@ -465,19 +517,22 @@ with st.sidebar:
                 key="new_user_access_days",
             )
             waiting_users = conn.execute(
-                "SELECT id, username, full_name, id_last4, gender, region, country, invite_code, "
+                "SELECT id, username, full_name, id_last4, id_number_encrypted, mt5_account, "
+                "mt5_password_encrypted, gender, region, country, invite_code, "
                 "capital_range, needs_training, provides_capital, profit_share_pct, "
                 "profit_share_recipient, withdrawal_method, currency "
                 "FROM users WHERE approved=0 ORDER BY created_at"
             ).fetchall()
         if not waiting_users:
             st.caption("目前没有等待审核的用户。")
-        for (user_id, username, full_name, id_last4, gender, region, country, invite_code,
-             capital_range, needs_training, provides_capital, profit_share_pct,
+        for (user_id, username, full_name, id_last4, id_number_encrypted, mt5_account,
+             mt5_password_encrypted, gender, region, country, invite_code, capital_range,
+             needs_training, provides_capital, profit_share_pct,
              profit_share_recipient, withdrawal_method, currency) in waiting_users:
             with st.expander(f"查看 {username} 的会员资料"):
                 show_member_profile(
-                    full_name, id_last4, gender, region, country, invite_code,
+                    user_id, full_name, id_last4, id_number_encrypted, mt5_account,
+                    mt5_password_encrypted, gender, region, country, invite_code,
                     capital_range, needs_training, provides_capital, profit_share_pct,
                     profit_share_recipient, withdrawal_method, currency,
                 )
@@ -495,20 +550,23 @@ with st.sidebar:
         with sqlite3.connect(DATABASE_PATH) as conn:
             active_users = conn.execute(
                 "SELECT id, username, risk_pct, min_score, expires_at, full_name, id_last4, "
-                "gender, region, country, invite_code, capital_range, needs_training, "
+                "id_number_encrypted, mt5_account, mt5_password_encrypted, gender, region, country, "
+                "invite_code, capital_range, needs_training, "
                 "provides_capital, profit_share_pct, profit_share_recipient, withdrawal_method, currency "
                 "FROM users WHERE approved=1 AND is_admin=0 ORDER BY username"
             ).fetchall()
         if not active_users:
             st.caption("目前没有其他已通过用户。")
         for (user_id, username, saved_risk_pct, saved_min_score, expires_at, full_name, id_last4,
-             gender, region, country, invite_code, capital_range, needs_training,
+             id_number_encrypted, mt5_account, mt5_password_encrypted, gender, region, country,
+             invite_code, capital_range, needs_training,
              provides_capital, profit_share_pct, profit_share_recipient, withdrawal_method,
              currency) in active_users:
             status = "已到期" if access_has_expired(expires_at) else "有效"
             with st.expander(f"查看 {username} 的会员资料"):
                 show_member_profile(
-                    full_name, id_last4, gender, region, country, invite_code,
+                    user_id, full_name, id_last4, id_number_encrypted, mt5_account,
+                    mt5_password_encrypted, gender, region, country, invite_code,
                     capital_range, needs_training, provides_capital, profit_share_pct,
                     profit_share_recipient, withdrawal_method, currency,
                 )
@@ -524,6 +582,16 @@ with st.sidebar:
                 "最低评分门槛", min_value=60, max_value=85,
                 value=int(saved_min_score or 70), step=1,
                 key=f"score_{user_id}",
+            )
+            share_left, recipient_right = st.columns(2)
+            assigned_profit_share = share_left.number_input(
+                "利润分成 (%)", min_value=0.0, max_value=100.0,
+                value=float(profit_share_pct or 0.0), step=1.0,
+                key=f"profit_share_{user_id}",
+            )
+            assigned_recipient = recipient_right.text_input(
+                "分成对象", value=profit_share_recipient or "",
+                key=f"profit_recipient_{user_id}",
             )
             renew_left, save_left, revoke_right = st.columns(3)
             if renew_left.button("续期 30 天", key=f"renew_{user_id}"):
@@ -543,6 +611,7 @@ with st.sidebar:
             if save_left.button("保存设置", key=f"save_settings_{user_id}"):
                 set_user_risk_pct(user_id, assigned_risk)
                 set_user_min_score(user_id, assigned_score)
+                set_user_profit_share(user_id, assigned_profit_share, assigned_recipient.strip())
                 st.rerun()
             if revoke_right.button("取消权限", key=f"revoke_{user_id}"):
                 with sqlite3.connect(DATABASE_PATH) as conn:
