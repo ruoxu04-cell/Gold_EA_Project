@@ -86,12 +86,23 @@ def format_expiry(expires_at: str | None) -> str:
         return "期限资料无效"
 
 
+def mask_id_number(last4: str | None) -> str:
+    return f"****{last4}" if last4 else "未填写"
+
+
 def init_database() -> None:
     with sqlite3.connect(DATABASE_PATH) as conn:
         conn.execute("""CREATE TABLE IF NOT EXISTS users (
             id INTEGER PRIMARY KEY, username TEXT UNIQUE NOT NULL,
             password_hash TEXT NOT NULL, approved INTEGER NOT NULL DEFAULT 0,
             is_admin INTEGER NOT NULL DEFAULT 0, expires_at TEXT,
+            full_name TEXT, email TEXT, phone TEXT, country TEXT,
+            trading_experience TEXT, registration_note TEXT,
+            id_number_hash TEXT, id_last4 TEXT, gender TEXT, region TEXT,
+            invite_code TEXT, capital_range TEXT,
+            needs_training INTEGER DEFAULT 0, provides_capital INTEGER DEFAULT 0,
+            profit_share_pct REAL, profit_share_recipient TEXT,
+            withdrawal_method TEXT, currency TEXT,
             created_at TEXT NOT NULL)""")
         # 兼容之前没有审批栏位的旧 users.db。
         columns = {row[1] for row in conn.execute("PRAGMA table_info(users)")}
@@ -101,6 +112,28 @@ def init_database() -> None:
             conn.execute("ALTER TABLE users ADD COLUMN is_admin INTEGER DEFAULT 0")
         if "expires_at" not in columns:
             conn.execute("ALTER TABLE users ADD COLUMN expires_at TEXT")
+        for column, definition in {
+            "full_name": "TEXT",
+            "email": "TEXT",
+            "phone": "TEXT",
+            "country": "TEXT",
+            "trading_experience": "TEXT",
+            "registration_note": "TEXT",
+            "id_number_hash": "TEXT",
+            "id_last4": "TEXT",
+            "gender": "TEXT",
+            "region": "TEXT",
+            "invite_code": "TEXT",
+            "capital_range": "TEXT",
+            "needs_training": "INTEGER DEFAULT 0",
+            "provides_capital": "INTEGER DEFAULT 0",
+            "profit_share_pct": "REAL",
+            "profit_share_recipient": "TEXT",
+            "withdrawal_method": "TEXT",
+            "currency": "TEXT",
+        }.items():
+            if column not in columns:
+                conn.execute(f"ALTER TABLE users ADD COLUMN {column} {definition}")
         if "risk_pct" not in columns:
             conn.execute("ALTER TABLE users ADD COLUMN risk_pct REAL DEFAULT 1.0")
         if "min_score" not in columns:
@@ -112,11 +145,29 @@ def init_database() -> None:
             (OWNER_USERNAME, OWNER_PASSWORD_HASH, datetime.now(timezone.utc).isoformat()))
 
 
-def create_user(username: str, password: str) -> tuple[bool, str]:
+def create_user(username: str, password: str, profile: dict[str, object]) -> tuple[bool, str]:
     try:
         with sqlite3.connect(DATABASE_PATH) as conn:
-            conn.execute("""INSERT INTO users (username, password_hash, created_at)
-                VALUES (?, ?, ?)""", (username, hash_password(password), datetime.now(timezone.utc).isoformat()))
+            existing_id = conn.execute(
+                "SELECT 1 FROM users WHERE id_number_hash=?",
+                (profile["id_number_hash"],),
+            ).fetchone()
+            if existing_id:
+                return False, "此身份证／护照号码已经注册过。"
+            conn.execute("""INSERT INTO users (
+                    username, password_hash, full_name, id_number_hash, id_last4,
+                    gender, region, country, invite_code, capital_range,
+                    needs_training, provides_capital, profit_share_pct,
+                    profit_share_recipient, withdrawal_method, currency, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""", (
+                    username, hash_password(password), profile["full_name"],
+                    profile["id_number_hash"], profile["id_last4"], profile["gender"],
+                    profile["region"], profile["country"], profile["invite_code"],
+                    profile["capital_range"], profile["needs_training"],
+                    profile["provides_capital"], profile["profit_share_pct"],
+                    profile["profit_share_recipient"], profile["withdrawal_method"],
+                    profile["currency"], datetime.now(timezone.utc).isoformat(),
+                ))
         return True, "注册申请已提交，等待管理员审核。"
     except sqlite3.IntegrityError:
         return False, "这个用户名已经被注册。"
@@ -163,6 +214,31 @@ def set_user_min_score(user_id: int, min_score: int) -> None:
         conn.execute("UPDATE users SET min_score=? WHERE id=?", (min_score, user_id))
 
 
+def show_member_profile(
+    full_name: str | None, id_last4: str | None, gender: str | None,
+    region: str | None, country: str | None, invite_code: str | None,
+    capital_range: str | None, needs_training: int | None,
+    provides_capital: int | None, profit_share_pct: float | None,
+    profit_share_recipient: str | None, withdrawal_method: str | None,
+    currency: str | None,
+) -> None:
+    """Only call this function from the administrator area."""
+    left, right = st.columns(2)
+    left.write(f"**姓名：** {full_name or '未填写'}")
+    left.write(f"**身份证／护照：** {mask_id_number(id_last4)}")
+    left.write(f"**性别：** {gender or '未填写'}")
+    left.write(f"**地区：** {region or '未填写'}")
+    left.write(f"**国家：** {country or '未填写'}")
+    left.write(f"**邀请码：** {invite_code or '未填写'}")
+    right.write(f"**资金规模：** {capital_range or '未填写'}")
+    right.write(f"**需要教学：** {'是' if needs_training else '否'}")
+    right.write(f"**提供资金：** {'是' if provides_capital else '否'}")
+    right.write(f"**利润分成：** {float(profit_share_pct or 0):.0f}%")
+    right.write(f"**分成对象：** {profit_share_recipient or '未填写'}")
+    right.write(f"**出金方式：** {withdrawal_method or '未填写'}")
+    right.write(f"**币种：** {currency or '未填写'}")
+
+
 def session_is_active() -> bool:
     """每次页面重跑时验证账号仍然获准，避免旧登录会话继续访问。"""
     username = st.session_state.get("username")
@@ -205,6 +281,23 @@ def login_required() -> None:
             username = st.text_input("创建用户名")
             password = st.text_input("创建密码", type="password")
             confirm = st.text_input("确认密码", type="password")
+            st.caption("会员资料（仅管理员审核和管理时可查看）")
+            full_name = st.text_input("姓名")
+            id_number = st.text_input("身份证／护照号码", type="password")
+            gender = st.selectbox("性别", ["请选择", "男", "女", "其他／不透露"])
+            region = st.text_input("地区／州")
+            country = st.text_input("国家", value="Malaysia")
+            invite_code = st.text_input("邀请码（如没有请填写：无）")
+            capital_range = st.selectbox(
+                "预计资金规模", ["请选择", "少于 1,000", "1,000–5,000", "5,001–10,000",
+                "10,001–50,000", "50,001–100,000", "100,000 以上"],
+            )
+            needs_training = st.radio("是否需要教学", ["需要", "不需要"], horizontal=True)
+            provides_capital = st.radio("是否提供资金", ["是", "否"], horizontal=True)
+            profit_share_pct = st.number_input("利润分成（%）", min_value=0.0, max_value=100.0, value=0.0, step=1.0)
+            profit_share_recipient = st.text_input("利润分成给谁（姓名／用户名；没有请填写：无）")
+            withdrawal_method = st.selectbox("出金方式", ["请选择", "银行转账", "电子钱包", "加密货币", "其他"])
+            currency = st.selectbox("币种", ["MYR", "USD", "SGD", "CNY", "USDT", "其他"])
             register = st.form_submit_button("提交注册申请")
         if register:
             username = username.strip()
@@ -214,8 +307,31 @@ def login_required() -> None:
                 st.error("密码至少需要 8 个字符。")
             elif password != confirm:
                 st.error("两次输入的密码不一致。")
+            elif not full_name.strip() or len(re.sub(r"\s+", "", id_number)) < 4:
+                st.error("请填写姓名和身份证／护照号码。")
+            elif gender == "请选择" or not region.strip() or not country.strip():
+                st.error("请填写性别、地区和国家。")
+            elif capital_range == "请选择" or withdrawal_method == "请选择":
+                st.error("请完成资金规模和出金方式的选择。")
             else:
-                ok, message = create_user(username, password)
+                normalized_id = re.sub(r"\s+", "", id_number).upper()
+                profile = {
+                    "full_name": full_name.strip(),
+                    "id_number_hash": hashlib.sha256(normalized_id.encode()).hexdigest(),
+                    "id_last4": normalized_id[-4:],
+                    "gender": gender,
+                    "region": region.strip(),
+                    "country": country.strip(),
+                    "invite_code": invite_code.strip() or "无",
+                    "capital_range": capital_range,
+                    "needs_training": int(needs_training == "需要"),
+                    "provides_capital": int(provides_capital == "是"),
+                    "profit_share_pct": float(profit_share_pct),
+                    "profit_share_recipient": profit_share_recipient.strip() or "无",
+                    "withdrawal_method": withdrawal_method,
+                    "currency": currency,
+                }
+                ok, message = create_user(username, password, profile)
                 (st.success if ok else st.error)(message)
     st.stop()
 
@@ -349,11 +465,22 @@ with st.sidebar:
                 key="new_user_access_days",
             )
             waiting_users = conn.execute(
-                "SELECT id, username FROM users WHERE approved=0 ORDER BY created_at"
+                "SELECT id, username, full_name, id_last4, gender, region, country, invite_code, "
+                "capital_range, needs_training, provides_capital, profit_share_pct, "
+                "profit_share_recipient, withdrawal_method, currency "
+                "FROM users WHERE approved=0 ORDER BY created_at"
             ).fetchall()
         if not waiting_users:
             st.caption("目前没有等待审核的用户。")
-        for user_id, username in waiting_users:
+        for (user_id, username, full_name, id_last4, gender, region, country, invite_code,
+             capital_range, needs_training, provides_capital, profit_share_pct,
+             profit_share_recipient, withdrawal_method, currency) in waiting_users:
+            with st.expander(f"查看 {username} 的会员资料"):
+                show_member_profile(
+                    full_name, id_last4, gender, region, country, invite_code,
+                    capital_range, needs_training, provides_capital, profit_share_pct,
+                    profit_share_recipient, withdrawal_method, currency,
+                )
             left, right = st.columns([2, 1])
             left.write(f"👤 {username}")
             if right.button("通过", key=f"approve_{user_id}"):
@@ -367,13 +494,24 @@ with st.sidebar:
         st.caption("已通过的用户")
         with sqlite3.connect(DATABASE_PATH) as conn:
             active_users = conn.execute(
-                "SELECT id, username, risk_pct, min_score, expires_at "
+                "SELECT id, username, risk_pct, min_score, expires_at, full_name, id_last4, "
+                "gender, region, country, invite_code, capital_range, needs_training, "
+                "provides_capital, profit_share_pct, profit_share_recipient, withdrawal_method, currency "
                 "FROM users WHERE approved=1 AND is_admin=0 ORDER BY username"
             ).fetchall()
         if not active_users:
             st.caption("目前没有其他已通过用户。")
-        for user_id, username, saved_risk_pct, saved_min_score, expires_at in active_users:
+        for (user_id, username, saved_risk_pct, saved_min_score, expires_at, full_name, id_last4,
+             gender, region, country, invite_code, capital_range, needs_training,
+             provides_capital, profit_share_pct, profit_share_recipient, withdrawal_method,
+             currency) in active_users:
             status = "已到期" if access_has_expired(expires_at) else "有效"
+            with st.expander(f"查看 {username} 的会员资料"):
+                show_member_profile(
+                    full_name, id_last4, gender, region, country, invite_code,
+                    capital_range, needs_training, provides_capital, profit_share_pct,
+                    profit_share_recipient, withdrawal_method, currency,
+                )
             st.caption(f"访问状态：{status} · 到期：{format_expiry(expires_at)}")
             st.write(f"👤 {username}")
             risk_left, score_left = st.columns(2)
