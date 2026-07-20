@@ -1,6 +1,6 @@
 """
-黄金交易系统 - 可靠版
-使用 RSI + MACD 生成交易信号
+黄金交易系统 - 中文版 + 动态止盈
+根据市场趋势强度自动调整止盈大小
 """
 
 import streamlit as st
@@ -170,6 +170,74 @@ def ai_predict(df):
     return float(prob)
 
 # ============================================================
+# 🚀 动态止盈计算（根据趋势强度调整）
+# ============================================================
+def calculate_dynamic_targets(df, current_price, atr, prob):
+    """
+    根据市场状态动态计算止盈止损
+    - 趋势强 → 大止盈
+    - 趋势弱 → 小止盈
+    - 震荡 → 中等止盈
+    """
+    latest = df.iloc[-1]
+    
+    # 1. 计算趋势强度
+    ma20 = latest.get('MA20', current_price)
+    price_deviation = abs(current_price - ma20) / ma20 * 100
+    
+    # MACD 强度
+    macd_hist = latest.get('MACD_Histogram', 0)
+    macd_strength = abs(macd_hist) / current_price * 100
+    
+    # RSI 极端程度
+    rsi = latest.get('RSI', 50)
+    rsi_extreme = abs(rsi - 50) / 50
+    
+    # 综合趋势强度（0-1）
+    trend_strength = min(1, (price_deviation * 0.4 + macd_strength * 0.3 + rsi_extreme * 0.3) / 2)
+    
+    # 2. 根据趋势强度调整倍数
+    if trend_strength > 0.6:
+        stop_multiplier = 1.5
+        take_multiplier = 3.5
+        take_style = "🚀 强趋势（大止盈）"
+    elif trend_strength > 0.3:
+        stop_multiplier = 1.3
+        take_multiplier = 2.5
+        take_style = "📈 中等趋势"
+    else:
+        stop_multiplier = 1.0
+        take_multiplier = 1.8
+        take_style = "⚖️ 震荡（小止盈）"
+    
+    # 3. AI 信心度调整
+    confidence_boost = (prob - 0.5) * 2
+    take_multiplier = take_multiplier + confidence_boost * 0.5
+    
+    # 4. 计算具体价格
+    long_stop = current_price - atr * stop_multiplier
+    long_take = current_price + atr * take_multiplier
+    short_stop = current_price + atr * stop_multiplier
+    short_take = current_price - atr * take_multiplier
+    
+    # 计算风险收益比
+    long_risk = current_price - long_stop
+    long_reward = long_take - current_price
+    long_rr = long_reward / long_risk if long_risk > 0 else 0
+    
+    return {
+        'long_stop': long_stop,
+        'long_take': long_take,
+        'short_stop': short_stop,
+        'short_take': short_take,
+        'stop_multiplier': stop_multiplier,
+        'take_multiplier': take_multiplier,
+        'trend_strength': trend_strength,
+        'take_style': take_style,
+        'long_rr': long_rr
+    }
+
+# ============================================================
 # 获取数据
 # ============================================================
 with st.spinner("🔄 正在获取实时数据..."):
@@ -186,6 +254,9 @@ true_range = np.max(ranges, axis=1)
 atr = true_range.rolling(14).mean().iloc[-1]
 if pd.isna(atr):
     atr = 12
+
+# 计算动态止盈
+targets = calculate_dynamic_targets(df, current_price, atr, prob)
 
 # ============================================================
 # 顶部：标题在左 + 时间在右
@@ -291,62 +362,63 @@ col_trade, col_market = st.columns([2, 1])
 with col_trade:
     st.markdown('<p style="color:#f7971e;font-weight:700;font-size:16px;">🎯 交易建议</p>', unsafe_allow_html=True)
     
+    # 显示当前市场状态
+    st.caption(f"📊 市场状态：{targets['take_style']} | 趋势强度：{targets['trend_strength']*100:.0f}%")
+    
     if prob >= 0.70:
-        long_stop = current_price - atr * 1.5
-        long_take = current_price + atr * 2.5
-        rr = ((long_take - current_price) / (current_price - long_stop)) if (current_price - long_stop) > 0 else 0
         st.markdown(f"""
         <div class="trade-card trade-card-buy">
             <div class="trade-title" style="color:#00ff88;">✅ 强烈建议 · 买入（做多）</div>
             <div class="trade-row">├─ 入场价：<strong>${current_price:.2f}</strong></div>
-            <div class="trade-row">├─ 止损价：<strong style="color:#ff4757;">${long_stop:.2f}</strong></div>
-            <div class="trade-row">├─ 止盈价：<strong style="color:#00ff88;">${long_take:.2f}</strong></div>
-            <div class="trade-row">├─ 风险/收益比：<strong>1:{rr:.2f}</strong></div>
+            <div class="trade-row">├─ 止损价：<strong style="color:#ff4757;">${targets['long_stop']:.2f}</strong></div>
+            <div class="trade-row">├─ 止盈价：<strong style="color:#00ff88;">${targets['long_take']:.2f}</strong></div>
+            <div class="trade-row">├─ 风险/收益比：<strong>1:{targets['long_rr']:.2f}</strong></div>
+            <div class="trade-row">├─ 止盈倍数：<strong>{targets['take_multiplier']:.1f}x ATR</strong></div>
             <div class="trade-row">└─ 建议仓位：<strong style="color:#ffd700;">2% 总资金</strong></div>
         </div>
         """, unsafe_allow_html=True)
         
     elif prob >= 0.55:
-        long_stop = current_price - atr * 1.2
-        long_take = current_price + atr * 2.0
-        rr = ((long_take - current_price) / (current_price - long_stop)) if (current_price - long_stop) > 0 else 0
         st.markdown(f"""
         <div class="trade-card trade-card-buy">
             <div class="trade-title" style="color:#ffd700;">⚠️ 轻仓试多</div>
             <div class="trade-row">├─ 入场价：<strong>${current_price:.2f}</strong></div>
-            <div class="trade-row">├─ 止损价：<strong style="color:#ff4757;">${long_stop:.2f}</strong></div>
-            <div class="trade-row">├─ 止盈价：<strong style="color:#00ff88;">${long_take:.2f}</strong></div>
-            <div class="trade-row">├─ 风险/收益比：<strong>1:{rr:.2f}</strong></div>
+            <div class="trade-row">├─ 止损价：<strong style="color:#ff4757;">${targets['long_stop']:.2f}</strong></div>
+            <div class="trade-row">├─ 止盈价：<strong style="color:#00ff88;">${targets['long_take']:.2f}</strong></div>
+            <div class="trade-row">├─ 风险/收益比：<strong>1:{targets['long_rr']:.2f}</strong></div>
+            <div class="trade-row">├─ 止盈倍数：<strong>{targets['take_multiplier']:.1f}x ATR</strong></div>
             <div class="trade-row">└─ 建议仓位：<strong style="color:#ffd700;">1% 总资金</strong></div>
         </div>
         """, unsafe_allow_html=True)
         
     elif prob <= 0.30:
-        short_stop = current_price + atr * 1.5
-        short_take = current_price - atr * 2.5
-        rr = ((current_price - short_take) / (short_stop - current_price)) if (short_stop - current_price) > 0 else 0
+        short_risk = targets['short_stop'] - current_price
+        short_reward = current_price - targets['short_take']
+        short_rr = short_reward / short_risk if short_risk > 0 else 0
         st.markdown(f"""
         <div class="trade-card trade-card-sell">
             <div class="trade-title" style="color:#ff4757;">❌ 强烈建议 · 卖出（做空）</div>
             <div class="trade-row">├─ 入场价：<strong>${current_price:.2f}</strong></div>
-            <div class="trade-row">├─ 止损价：<strong style="color:#ff4757;">${short_stop:.2f}</strong></div>
-            <div class="trade-row">├─ 止盈价：<strong style="color:#00ff88;">${short_take:.2f}</strong></div>
-            <div class="trade-row">├─ 风险/收益比：<strong>1:{rr:.2f}</strong></div>
+            <div class="trade-row">├─ 止损价：<strong style="color:#ff4757;">${targets['short_stop']:.2f}</strong></div>
+            <div class="trade-row">├─ 止盈价：<strong style="color:#00ff88;">${targets['short_take']:.2f}</strong></div>
+            <div class="trade-row">├─ 风险/收益比：<strong>1:{short_rr:.2f}</strong></div>
+            <div class="trade-row">├─ 止盈倍数：<strong>{targets['take_multiplier']:.1f}x ATR</strong></div>
             <div class="trade-row">└─ 建议仓位：<strong style="color:#ffd700;">2% 总资金</strong></div>
         </div>
         """, unsafe_allow_html=True)
         
     elif prob <= 0.45:
-        short_stop = current_price + atr * 1.2
-        short_take = current_price - atr * 2.0
-        rr = ((current_price - short_take) / (short_stop - current_price)) if (short_stop - current_price) > 0 else 0
+        short_risk = targets['short_stop'] - current_price
+        short_reward = current_price - targets['short_take']
+        short_rr = short_reward / short_risk if short_risk > 0 else 0
         st.markdown(f"""
         <div class="trade-card trade-card-sell">
             <div class="trade-title" style="color:#ffd700;">⚠️ 轻仓试空</div>
             <div class="trade-row">├─ 入场价：<strong>${current_price:.2f}</strong></div>
-            <div class="trade-row">├─ 止损价：<strong style="color:#ff4757;">${short_stop:.2f}</strong></div>
-            <div class="trade-row">├─ 止盈价：<strong style="color:#00ff88;">${short_take:.2f}</strong></div>
-            <div class="trade-row">├─ 风险/收益比：<strong>1:{rr:.2f}</strong></div>
+            <div class="trade-row">├─ 止损价：<strong style="color:#ff4757;">${targets['short_stop']:.2f}</strong></div>
+            <div class="trade-row">├─ 止盈价：<strong style="color:#00ff88;">${targets['short_take']:.2f}</strong></div>
+            <div class="trade-row">├─ 风险/收益比：<strong>1:{short_rr:.2f}</strong></div>
+            <div class="trade-row">├─ 止盈倍数：<strong>{targets['take_multiplier']:.1f}x ATR</strong></div>
             <div class="trade-row">└─ 建议仓位：<strong style="color:#ffd700;">1% 总资金</strong></div>
         </div>
         """, unsafe_allow_html=True)
@@ -357,6 +429,7 @@ with col_trade:
             <div class="trade-title" style="color:#ffd700;">🤔 观望 · 等待信号</div>
             <div class="trade-row">市场方向不明</div>
             <div class="trade-row">上涨概率：<strong>{prob*100:.1f}%</strong></div>
+            <div class="trade-row">趋势强度：<strong>{targets['trend_strength']*100:.0f}%</strong></div>
             <div class="trade-row">等待价格突破关键位再交易</div>
         </div>
         """, unsafe_allow_html=True)
