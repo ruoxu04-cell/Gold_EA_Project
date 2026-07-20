@@ -17,7 +17,7 @@ import plotly.graph_objects as go
 import requests
 import streamlit as st
 
-TWELVE_DATA_API_KEY = "b3b8143cd542493b9de1fb5aa13a9d07"
+TWELVE_DATA_API_KEY = "把你的新_API_Key_粘贴在这里"
 
 st.set_page_config(page_title="TOKONG 黄金市场观察", page_icon="🏆", layout="wide")
 
@@ -92,9 +92,24 @@ def check_login(username: str, password: str) -> tuple[str, bool]:
     return "success", bool(user[2])
 
 
+def session_is_active() -> bool:
+    """每次页面重跑时验证账号仍然获准，避免旧登录会话继续访问。"""
+    username = st.session_state.get("username")
+    if not username:
+        return False
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        user = conn.execute(
+            "SELECT approved FROM users WHERE username=?", (username,)
+        ).fetchone()
+    return bool(user and user[0])
+
+
 def login_required() -> None:
-    if st.session_state.get("logged_in"):
+    if st.session_state.get("logged_in") and session_is_active():
         return
+    if st.session_state.get("logged_in"):
+        st.session_state.clear()
+        st.warning("此账号的访问权限已被管理员取消。")
     st.title("🏆 TOKONG 黄金交易系统")
     st.caption("请登录或注册后进入市场观察页面。")
     login_tab, register_tab = st.tabs(["登录", "注册"])
@@ -265,6 +280,21 @@ with st.sidebar:
             if right.button("通过", key=f"approve_{user_id}"):
                 with sqlite3.connect(DATABASE_PATH) as conn:
                     conn.execute("UPDATE users SET approved=1 WHERE id=?", (user_id,))
+                st.rerun()
+
+        st.caption("已通过的用户")
+        with sqlite3.connect(DATABASE_PATH) as conn:
+            active_users = conn.execute(
+                "SELECT id, username FROM users WHERE approved=1 AND is_admin=0 ORDER BY username"
+            ).fetchall()
+        if not active_users:
+            st.caption("目前没有其他已通过用户。")
+        for user_id, username in active_users:
+            left, right = st.columns([2, 1])
+            left.write(f"👤 {username}")
+            if right.button("取消权限", key=f"revoke_{user_id}"):
+                with sqlite3.connect(DATABASE_PATH) as conn:
+                    conn.execute("UPDATE users SET approved=0 WHERE id=?", (user_id,))
                 st.rerun()
 
     st.divider()
