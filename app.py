@@ -417,7 +417,7 @@ with col_trade:
         st.markdown(f"""
         <div class="trade-card trade-card-wait">
             <div class="trade-title" style="color:#ffd700;">⏸️ 建议：观望，暂不买入</div>
-            <div class="trade-row">├─ 原因：AI信心度不足（{prob*100:.1f}%），需大于60%才可入场</div>
+            <div class="trade-row">├─ 原因：AI信心度不足</div>
             <div class="trade-row">├─ 当前信号方向：看涨（但强度不够）</div>
             <div class="trade-row">├─ 建议等待概率升至 <strong>60%</strong> 以上</div>
             <div class="trade-row">└─ 或等待价格突破关键位后重新判断</div>
