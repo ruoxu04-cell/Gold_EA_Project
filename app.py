@@ -8,7 +8,7 @@ import re
 import secrets
 import sqlite3
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import numpy as np
@@ -16,6 +16,7 @@ import pandas as pd
 import plotly.graph_objects as go
 import requests
 import streamlit as st
+from streamlit_autorefresh import st_autorefresh
 
 TWELVE_DATA_API_KEY = "b3b8143cd542493b9de1fb5aa13a9d07"
 
@@ -38,6 +39,7 @@ OWNER_PASSWORD_HASH = (
     "c37e4f6e6a785573c842b0185690a1ad57dab2d81e05805751cce76e7a2a61f6"
 )
 DEFAULT_ACCOUNT_SIZE = 10_000.0
+DEFAULT_ACCESS_DAYS = 30
 
 
 def hash_password(password: str, salt: bytes | None = None) -> str:
@@ -54,18 +56,51 @@ def verify_password(password: str, stored: str) -> bool:
         return False
 
 
+def expires_at_after(days: int) -> str:
+    return (datetime.now(timezone.utc) + timedelta(days=days)).isoformat()
+
+
+def access_has_expired(expires_at: str | None) -> bool:
+    """Invalid expiry data is never accepted as valid access."""
+    if expires_at is None:
+        # Existing accounts made before this feature stay usable until changed.
+        return False
+    try:
+        expiry = datetime.fromisoformat(expires_at)
+        if expiry.tzinfo is None:
+            expiry = expiry.replace(tzinfo=timezone.utc)
+        return datetime.now(timezone.utc) >= expiry.astimezone(timezone.utc)
+    except (TypeError, ValueError):
+        return True
+
+
+def format_expiry(expires_at: str | None) -> str:
+    if expires_at is None:
+        return "未设置期限（旧账户）"
+    try:
+        expiry = datetime.fromisoformat(expires_at)
+        if expiry.tzinfo is None:
+            expiry = expiry.replace(tzinfo=timezone.utc)
+        return expiry.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    except (TypeError, ValueError):
+        return "期限资料无效"
+
+
 def init_database() -> None:
     with sqlite3.connect(DATABASE_PATH) as conn:
         conn.execute("""CREATE TABLE IF NOT EXISTS users (
             id INTEGER PRIMARY KEY, username TEXT UNIQUE NOT NULL,
             password_hash TEXT NOT NULL, approved INTEGER NOT NULL DEFAULT 0,
-            is_admin INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL)""")
+            is_admin INTEGER NOT NULL DEFAULT 0, expires_at TEXT,
+            created_at TEXT NOT NULL)""")
         # 兼容之前没有审批栏位的旧 users.db。
         columns = {row[1] for row in conn.execute("PRAGMA table_info(users)")}
         if "approved" not in columns:
             conn.execute("ALTER TABLE users ADD COLUMN approved INTEGER DEFAULT 0")
         if "is_admin" not in columns:
             conn.execute("ALTER TABLE users ADD COLUMN is_admin INTEGER DEFAULT 0")
+        if "expires_at" not in columns:
+            conn.execute("ALTER TABLE users ADD COLUMN expires_at TEXT")
         if "risk_pct" not in columns:
             conn.execute("ALTER TABLE users ADD COLUMN risk_pct REAL DEFAULT 1.0")
         if "min_score" not in columns:
@@ -89,11 +124,16 @@ def create_user(username: str, password: str) -> tuple[bool, str]:
 
 def check_login(username: str, password: str) -> tuple[str, bool]:
     with sqlite3.connect(DATABASE_PATH) as conn:
-        user = conn.execute("SELECT password_hash, approved, is_admin FROM users WHERE username=?", (username,)).fetchone()
+        user = conn.execute(
+            "SELECT password_hash, approved, is_admin, expires_at FROM users WHERE username=?",
+            (username,),
+        ).fetchone()
     if not user or not verify_password(password, user[0]):
         return "invalid", False
     if not user[1]:
         return "pending", False
+    if not user[2] and access_has_expired(user[3]):
+        return "expired", False
     return "success", bool(user[2])
 
 
@@ -130,9 +170,9 @@ def session_is_active() -> bool:
         return False
     with sqlite3.connect(DATABASE_PATH) as conn:
         user = conn.execute(
-            "SELECT approved FROM users WHERE username=?", (username,)
+            "SELECT approved, is_admin, expires_at FROM users WHERE username=?", (username,)
         ).fetchone()
-    return bool(user and user[0])
+    return bool(user and user[0] and (user[1] or not access_has_expired(user[2])))
 
 
 def login_required() -> None:
@@ -140,7 +180,7 @@ def login_required() -> None:
         return
     if st.session_state.get("logged_in"):
         st.session_state.clear()
-        st.warning("此账号的访问权限已被管理员取消。")
+        st.warning("此账号的访问权限已取消或已到期，你已自动退出。")
     st.title("🏆 TOKONG 黄金交易系统")
     st.caption("请登录或注册后进入市场观察页面。")
     login_tab, register_tab = st.tabs(["登录", "注册"])
@@ -154,6 +194,8 @@ def login_required() -> None:
             if status == "success":
                 st.session_state.update(logged_in=True, username=username.strip(), is_admin=is_admin)
                 st.rerun()
+            elif status == "expired":
+                st.error("你的访问期限已到，请联系管理员续期。")
             elif status == "pending":
                 st.warning("你的账号正在等待管理员审核。")
             else:
@@ -288,6 +330,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 init_database()
+st_autorefresh(interval=60_000, limit=None, key="access_expiry_check")
 login_required()
 
 with st.sidebar:
@@ -300,6 +343,11 @@ with st.sidebar:
         st.divider()
         st.subheader("👑 注册审核")
         with sqlite3.connect(DATABASE_PATH) as conn:
+            access_days = st.number_input(
+                "新批准账户的访问期限（天）", min_value=1,
+                max_value=365, value=DEFAULT_ACCESS_DAYS, step=1,
+                key="new_user_access_days",
+            )
             waiting_users = conn.execute(
                 "SELECT id, username FROM users WHERE approved=0 ORDER BY created_at"
             ).fetchall()
@@ -310,17 +358,23 @@ with st.sidebar:
             left.write(f"👤 {username}")
             if right.button("通过", key=f"approve_{user_id}"):
                 with sqlite3.connect(DATABASE_PATH) as conn:
-                    conn.execute("UPDATE users SET approved=1 WHERE id=?", (user_id,))
+                    conn.execute(
+                        "UPDATE users SET approved=1, expires_at=? WHERE id=?",
+                        (expires_at_after(int(access_days)), user_id),
+                    )
                 st.rerun()
 
         st.caption("已通过的用户")
         with sqlite3.connect(DATABASE_PATH) as conn:
             active_users = conn.execute(
-                "SELECT id, username, risk_pct, min_score FROM users WHERE approved=1 AND is_admin=0 ORDER BY username"
+                "SELECT id, username, risk_pct, min_score, expires_at "
+                "FROM users WHERE approved=1 AND is_admin=0 ORDER BY username"
             ).fetchall()
         if not active_users:
             st.caption("目前没有其他已通过用户。")
-        for user_id, username, saved_risk_pct, saved_min_score in active_users:
+        for user_id, username, saved_risk_pct, saved_min_score, expires_at in active_users:
+            status = "已到期" if access_has_expired(expires_at) else "有效"
+            st.caption(f"访问状态：{status} · 到期：{format_expiry(expires_at)}")
             st.write(f"👤 {username}")
             risk_left, score_left = st.columns(2)
             assigned_risk = risk_left.number_input(
@@ -333,7 +387,21 @@ with st.sidebar:
                 value=int(saved_min_score or 70), step=1,
                 key=f"score_{user_id}",
             )
-            save_left, revoke_right = st.columns(2)
+            renew_left, save_left, revoke_right = st.columns(3)
+            if renew_left.button("续期 30 天", key=f"renew_{user_id}"):
+                try:
+                    current_expiry = datetime.fromisoformat(expires_at) if expires_at else datetime.now(timezone.utc)
+                    if current_expiry.tzinfo is None:
+                        current_expiry = current_expiry.replace(tzinfo=timezone.utc)
+                except (TypeError, ValueError):
+                    current_expiry = datetime.now(timezone.utc)
+                base = max(current_expiry.astimezone(timezone.utc), datetime.now(timezone.utc))
+                with sqlite3.connect(DATABASE_PATH) as conn:
+                    conn.execute(
+                        "UPDATE users SET expires_at=? WHERE id=?",
+                        ((base + timedelta(days=DEFAULT_ACCESS_DAYS)).isoformat(), user_id),
+                    )
+                st.rerun()
             if save_left.button("保存设置", key=f"save_settings_{user_id}"):
                 set_user_risk_pct(user_id, assigned_risk)
                 set_user_min_score(user_id, assigned_score)
