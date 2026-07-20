@@ -49,13 +49,28 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ============================================================
-# 获取实时黄金价格
+# 🚀 获取实时黄金价格（使用 Twelve Data API）
 # ============================================================
+# 去 https://twelvedata.com/ 注册获取你的 API Key
+TWELVE_DATA_API_KEY = "b3b8143cd542493b9de1fb5aa13a9d07"
+
 @st.cache_data(ttl=30)
 def get_realtime_price():
-    """从免费API获取实时黄金价格"""
+    """从 Twelve Data API 获取实时黄金价格"""
     
-    # API 1: Yadio
+    # API 1: Twelve Data（最稳定）
+    try:
+        url = f"https://api.twelvedata.com/price?symbol=XAU/USD&apikey={TWELVE_DATA_API_KEY}"
+        response = requests.get(url, timeout=10)
+        if response.status_code == 200:
+            data = response.json()
+            price = data.get('price')
+            if price and float(price) > 1000:
+                return float(price), "Twelve Data"
+    except:
+        pass
+    
+    # API 2: Yadio
     try:
         url = "https://api.yadio.io/rates/XAU.json"
         response = requests.get(url, timeout=10)
@@ -67,7 +82,7 @@ def get_realtime_price():
     except:
         pass
     
-    # API 2: Gold-API
+    # API 3: Gold-API
     try:
         url = "https://www.gold-api.com/price/XAU"
         response = requests.get(url, timeout=10)
@@ -285,6 +300,7 @@ st.markdown(f"""
     <div style="color:#8892b0;font-size:14px;text-transform:uppercase;letter-spacing:2px;">💰 实时价格</div>
     <div class="price-display">${current_price:,.2f}</div>
     <div class="{change_color}">{change_symbol} ${abs(price_change):.2f}</div>
+    <div style="color:#495670;font-size:12px;margin-top:5px;">📡 {data_source}</div>
 </div>
 """, unsafe_allow_html=True)
 
@@ -365,7 +381,7 @@ else:
     st.warning(f"⏸️ **当前信号：观望**（信心度不足，暂不交易）")
 
 # ============================================================
-# 交易建议（概率分级版 - 不会乱引导）
+# 交易建议（顾客友好版 - 不讲技术术语）
 # ============================================================
 st.markdown('<hr class="gold-divider">', unsafe_allow_html=True)
 
@@ -375,10 +391,10 @@ with col_trade:
     st.markdown('<p style="color:#f7971e;font-weight:700;font-size:16px;">🎯 交易建议</p>', unsafe_allow_html=True)
     
     # 显示当前市场状态
-    st.caption(f"📊 市场状态：{targets['take_style']} | 趋势强度：{targets['trend_strength']*100:.0f}% | AI信心度：{prob*100:.1f}%")
+    st.caption(f"📊 市场状态：{targets['take_style']} | 趋势强度：{targets['trend_strength']*100:.0f}%")
     
     # ============================================================
-    # 🚨 概率分级判断（核心逻辑 - 不会乱引导）
+    # 🚨 概率分级判断（顾客友好版）
     # ============================================================
     
     # ----- 看涨方向 -----
@@ -391,8 +407,6 @@ with col_trade:
             <div class="trade-row">├─ 止损价：<strong style="color:#ff4757;">${targets['long_stop']:.2f}</strong></div>
             <div class="trade-row">├─ 止盈价：<strong style="color:#00ff88;">${targets['long_take']:.2f}</strong></div>
             <div class="trade-row">├─ 风险/收益比：<strong>1:{targets['long_rr']:.2f}</strong></div>
-            <div class="trade-row">├─ 止盈倍数：<strong>{targets['take_multiplier']:.1f}x ATR</strong></div>
-            <div class="trade-row">├─ AI信心度：<strong style="color:#00ff88;">{prob*100:.1f}%</strong> ✅ 高信心</div>
             <div class="trade-row">└─ 建议仓位：<strong style="color:#ffd700;">2% 总资金</strong></div>
         </div>
         """, unsafe_allow_html=True)
@@ -406,21 +420,18 @@ with col_trade:
             <div class="trade-row">├─ 止损价：<strong style="color:#ff4757;">${targets['long_stop']:.2f}</strong></div>
             <div class="trade-row">├─ 止盈价：<strong style="color:#00ff88;">${targets['long_take']:.2f}</strong></div>
             <div class="trade-row">├─ 风险/收益比：<strong>1:{targets['long_rr']:.2f}</strong></div>
-            <div class="trade-row">├─ 止盈倍数：<strong>{targets['take_multiplier']:.1f}x ATR</strong></div>
-            <div class="trade-row">├─ AI信心度：<strong style="color:#ffd700;">{prob*100:.1f}%</strong> ⚠️ 中等信心</div>
             <div class="trade-row">└─ 建议仓位：<strong style="color:#ffd700;">1% 总资金</strong></div>
         </div>
         """, unsafe_allow_html=True)
         
     elif 0.55 <= prob < 0.60:
-        # 🚨 信心不足 → 不交易！
+        # 🚨 信心不足 → 不交易！（顾客友好版）
         st.markdown(f"""
         <div class="trade-card trade-card-wait">
-            <div class="trade-title" style="color:#ffd700;">⏸️ 建议：观望，暂不买入</div>
-            <div class="trade-row">├─ 原因：AI信心度不足</div>
-            <div class="trade-row">├─ 当前信号方向：看涨（但强度不够）</div>
-            <div class="trade-row">├─ 建议等待概率升至 <strong>60%</strong> 以上</div>
-            <div class="trade-row">└─ 或等待价格突破关键位后重新判断</div>
+            <div class="trade-title" style="color:#ffd700;">⏸️ 建议：暂时观望</div>
+            <div class="trade-row">├─ 原因：目前市场信号还不够明确</div>
+            <div class="trade-row">├─ 建议等待价格突破关键位后再做决定</div>
+            <div class="trade-row">└─ 耐心等待，好的机会值得等</div>
         </div>
         """, unsafe_allow_html=True)
     
@@ -437,8 +448,6 @@ with col_trade:
             <div class="trade-row">├─ 止损价：<strong style="color:#ff4757;">${targets['short_stop']:.2f}</strong></div>
             <div class="trade-row">├─ 止盈价：<strong style="color:#00ff88;">${targets['short_take']:.2f}</strong></div>
             <div class="trade-row">├─ 风险/收益比：<strong>1:{short_rr:.2f}</strong></div>
-            <div class="trade-row">├─ 止盈倍数：<strong>{targets['take_multiplier']:.1f}x ATR</strong></div>
-            <div class="trade-row">├─ AI信心度：<strong style="color:#ff4757;">{prob*100:.1f}%</strong> ✅ 高信心</div>
             <div class="trade-row">└─ 建议仓位：<strong style="color:#ffd700;">2% 总资金</strong></div>
         </div>
         """, unsafe_allow_html=True)
@@ -455,21 +464,18 @@ with col_trade:
             <div class="trade-row">├─ 止损价：<strong style="color:#ff4757;">${targets['short_stop']:.2f}</strong></div>
             <div class="trade-row">├─ 止盈价：<strong style="color:#00ff88;">${targets['short_take']:.2f}</strong></div>
             <div class="trade-row">├─ 风险/收益比：<strong>1:{short_rr:.2f}</strong></div>
-            <div class="trade-row">├─ 止盈倍数：<strong>{targets['take_multiplier']:.1f}x ATR</strong></div>
-            <div class="trade-row">├─ AI信心度：<strong style="color:#ffd700;">{prob*100:.1f}%</strong> ⚠️ 中等信心</div>
             <div class="trade-row">└─ 建议仓位：<strong style="color:#ffd700;">1% 总资金</strong></div>
         </div>
         """, unsafe_allow_html=True)
         
     elif 0.40 < prob <= 0.45:
-        # 🚨 信心不足 → 不交易！
+        # 🚨 信心不足 → 不交易！（顾客友好版）
         st.markdown(f"""
         <div class="trade-card trade-card-wait">
-            <div class="trade-title" style="color:#ffd700;">⏸️ 建议：观望，暂不卖出</div>
-            <div class="trade-row">├─ 原因：AI信心度不足（{prob*100:.1f}%），需低于40%才可入场</div>
-            <div class="trade-row">├─ 当前信号方向：看跌（但强度不够）</div>
-            <div class="trade-row">├─ 建议等待概率降至 <strong>40%</strong> 以下</div>
-            <div class="trade-row">└─ 或等待价格跌破关键位后重新判断</div>
+            <div class="trade-title" style="color:#ffd700;">⏸️ 建议：暂时观望</div>
+            <div class="trade-row">├─ 原因：目前市场信号还不够明确</div>
+            <div class="trade-row">├─ 建议等待价格跌破关键位后再做决定</div>
+            <div class="trade-row">└─ 耐心等待，好的机会值得等</div>
         </div>
         """, unsafe_allow_html=True)
     
@@ -477,11 +483,10 @@ with col_trade:
         # 完全中性 → 绝对不交易
         st.markdown(f"""
         <div class="trade-card trade-card-neutral">
-            <div class="trade-title" style="color:#8892b0;">🤔 建议：观望，方向不明</div>
-            <div class="trade-row">├─ 原因：AI信号中性（{prob*100:.1f}%），市场方向不明</div>
-            <div class="trade-row">├─ 上涨概率：<strong>{prob*100:.1f}%</strong></div>
-            <div class="trade-row">├─ 下跌概率：<strong>{(1-prob)*100:.1f}%</strong></div>
-            <div class="trade-row">└─ 建议等待市场方向明朗后再交易</div>
+            <div class="trade-title" style="color:#8892b0;">🤔 建议：观望</div>
+            <div class="trade-row">├─ 原因：市场方向不明，多空信号不清晰</div>
+            <div class="trade-row">├─ 建议等待市场方向明朗后再交易</div>
+            <div class="trade-row">└─ 耐心等待，好的机会值得等</div>
         </div>
         """, unsafe_allow_html=True)
 
@@ -568,6 +573,5 @@ st.markdown("""
 <div class="footer">
     <p>🏆 TOKONG 黄金交易 · 智能决策系统</p>
     <p style="color:#2d3850;">⚠️ 仅供参考，不构成投资建议 · 交易有风险，请谨慎决策</p>
-    <p style="color:#1a2340;font-size:11px;">📌 只有当AI信心度 &gt; 60% 或 &lt; 40% 时才会给出交易建议</p>
 </div>
 """, unsafe_allow_html=True)
