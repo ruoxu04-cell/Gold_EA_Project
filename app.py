@@ -127,23 +127,39 @@ def mask_id_number(last4: str | None) -> str:
 
 
 def init_database() -> None:
-    """初始化 Supabase 表（如果不存在）"""
+    """初始化 Supabase 表（检查管理员账号是否存在）"""
     supabase = get_supabase_client()
     
-    # 检查管理员是否存在
-    response = supabase.table("users").select("*").eq("username", OWNER_USERNAME).execute()
-    
-    if not response.data:
-        # 创建管理员账号
-        supabase.table("users").insert({
-            "username": OWNER_USERNAME,
-            "password_hash": OWNER_PASSWORD_HASH,
-            "approved": 1,
-            "is_admin": 1,
-            "created_at": datetime.now(timezone.utc).isoformat()
-        }).execute()
-
-
+    try:
+        # 检查管理员是否存在
+        response = supabase.table("users").select("*").eq("username", OWNER_USERNAME).execute()
+        
+        if not response.data:
+            # 管理员不存在，创建管理员
+            supabase.table("users").insert({
+                "username": OWNER_USERNAME,
+                "password_hash": OWNER_PASSWORD_HASH,
+                "approved": 1,
+                "is_admin": 1,
+                "created_at": datetime.now(timezone.utc).isoformat()
+            }).execute()
+            print("✅ 管理员账号创建成功")
+        else:
+            print("✅ 管理员账号已存在")
+            
+    except Exception as e:
+        st.error(f"""
+        ❌ **数据库连接失败**
+        
+        请检查：
+        1. Supabase 项目是否正常运行
+        2. `SUPABASE_URL` 和 `SUPABASE_KEY` 是否正确配置
+        3. `users` 表是否已创建
+        4. RLS 策略是否允许访问
+        
+        **错误详情：** {e}
+        """)
+        st.stop()
 def create_user(username: str, password: str, profile: dict[str, object]) -> tuple[bool, str]:
     try:
         supabase = get_supabase_client()
