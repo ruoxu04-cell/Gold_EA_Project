@@ -6,10 +6,8 @@ import os
 import hashlib
 import re
 import secrets
-import sqlite3
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -18,6 +16,7 @@ import requests
 import streamlit as st
 from cryptography.fernet import Fernet, InvalidToken
 from streamlit_autorefresh import st_autorefresh
+from supabase import create_client, Client
 
 TWELVE_DATA_API_KEY = "b3b8143cd542493b9de1fb5aa13a9d07"
 
@@ -32,8 +31,20 @@ class Signal:
     reasons: list[str]
 
 
-# 管理员账号。密码以不可逆哈希保存；管理员本人也必须先登录。
-DATABASE_PATH = Path(__file__).with_name("users.db")
+# ============================================================
+# 🚀 Supabase 数据库连接
+# ============================================================
+def get_supabase_client() -> Client:
+    """获取 Supabase 客户端"""
+    url = st.secrets.get("SUPABASE_URL")
+    key = st.secrets.get("SUPABASE_KEY")
+    if not url or not key:
+        st.error("❌ Supabase 未配置！请在 Streamlit Secrets 中设置 SUPABASE_URL 和 SUPABASE_KEY")
+        st.stop()
+    return create_client(url, key)
+
+
+# 管理员账号配置
 OWNER_USERNAME = "GS4896"
 OWNER_PASSWORD_HASH = (
     "af1166da60b40bfcde0dc1422c720b13$"
@@ -88,9 +99,7 @@ def expires_at_after(days: int) -> str:
 
 
 def access_has_expired(expires_at: str | None) -> bool:
-    """Invalid expiry data is never accepted as valid access."""
     if expires_at is None:
-        # Existing accounts made before this feature stay usable until changed.
         return False
     try:
         expiry = datetime.fromisoformat(expires_at)
@@ -118,140 +127,112 @@ def mask_id_number(last4: str | None) -> str:
 
 
 def init_database() -> None:
-    with sqlite3.connect(DATABASE_PATH) as conn:
-        conn.execute("""CREATE TABLE IF NOT EXISTS users (
-            id INTEGER PRIMARY KEY, username TEXT UNIQUE NOT NULL,
-            password_hash TEXT NOT NULL, approved INTEGER NOT NULL DEFAULT 0,
-            is_admin INTEGER NOT NULL DEFAULT 0, expires_at TEXT,
-            full_name TEXT, email TEXT, phone TEXT, country TEXT,
-            trading_experience TEXT, registration_note TEXT,
-            id_number_hash TEXT, id_last4 TEXT, id_number_encrypted TEXT,
-            mt5_account TEXT, mt5_password_encrypted TEXT, gender TEXT, region TEXT,
-            invite_code TEXT, capital_range TEXT,
-            needs_training INTEGER DEFAULT 0, provides_capital INTEGER DEFAULT 0,
-            profit_share_pct REAL, profit_share_recipient TEXT,
-            withdrawal_method TEXT, currency TEXT,
-            created_at TEXT NOT NULL)""")
-        # 兼容之前没有审批栏位的旧 users.db。
-        columns = {row[1] for row in conn.execute("PRAGMA table_info(users)")}
-        if "approved" not in columns:
-            conn.execute("ALTER TABLE users ADD COLUMN approved INTEGER DEFAULT 0")
-        if "is_admin" not in columns:
-            conn.execute("ALTER TABLE users ADD COLUMN is_admin INTEGER DEFAULT 0")
-        if "expires_at" not in columns:
-            conn.execute("ALTER TABLE users ADD COLUMN expires_at TEXT")
-        for column, definition in {
-            "full_name": "TEXT",
-            "email": "TEXT",
-            "phone": "TEXT",
-            "country": "TEXT",
-            "trading_experience": "TEXT",
-            "registration_note": "TEXT",
-            "id_number_hash": "TEXT",
-            "id_last4": "TEXT",
-            "id_number_encrypted": "TEXT",
-            "mt5_account": "TEXT",
-            "mt5_password_encrypted": "TEXT",
-            "gender": "TEXT",
-            "region": "TEXT",
-            "invite_code": "TEXT",
-            "capital_range": "TEXT",
-            "needs_training": "INTEGER DEFAULT 0",
-            "provides_capital": "INTEGER DEFAULT 0",
-            "profit_share_pct": "REAL",
-            "profit_share_recipient": "TEXT",
-            "withdrawal_method": "TEXT",
-            "currency": "TEXT",
-        }.items():
-            if column not in columns:
-                conn.execute(f"ALTER TABLE users ADD COLUMN {column} {definition}")
-        if "risk_pct" not in columns:
-            conn.execute("ALTER TABLE users ADD COLUMN risk_pct REAL DEFAULT 1.0")
-        if "min_score" not in columns:
-            conn.execute("ALTER TABLE users ADD COLUMN min_score INTEGER DEFAULT 70")
-        conn.execute("""INSERT INTO users (username, password_hash, approved, is_admin, created_at)
-            VALUES (?, ?, 1, 1, ?)
-            ON CONFLICT(username) DO UPDATE SET password_hash=excluded.password_hash,
-            approved=1, is_admin=1""",
-            (OWNER_USERNAME, OWNER_PASSWORD_HASH, datetime.now(timezone.utc).isoformat()))
+    """初始化 Supabase 表（如果不存在）"""
+    supabase = get_supabase_client()
+    
+    # 检查管理员是否存在
+    response = supabase.table("users").select("*").eq("username", OWNER_USERNAME).execute()
+    
+    if not response.data:
+        # 创建管理员账号
+        supabase.table("users").insert({
+            "username": OWNER_USERNAME,
+            "password_hash": OWNER_PASSWORD_HASH,
+            "approved": 1,
+            "is_admin": 1,
+            "created_at": datetime.now(timezone.utc).isoformat()
+        }).execute()
 
 
 def create_user(username: str, password: str, profile: dict[str, object]) -> tuple[bool, str]:
     try:
-        with sqlite3.connect(DATABASE_PATH) as conn:
-            existing_id = conn.execute(
-                "SELECT 1 FROM users WHERE id_number_hash=?",
-                (profile["id_number_hash"],),
-            ).fetchone()
-            if existing_id:
-                return False, "此身份证／护照号码已经注册过。"
-            conn.execute("""INSERT INTO users (
-                    username, password_hash, full_name, id_number_hash, id_last4,
-                    id_number_encrypted, mt5_account, mt5_password_encrypted,
-                    gender, region, country, invite_code, capital_range,
-                    needs_training, provides_capital, withdrawal_method, currency, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""", (
-                    username, hash_password(password), profile["full_name"],
-                    profile["id_number_hash"], profile["id_last4"],
-                    profile["id_number_encrypted"], profile["mt5_account"],
-                    profile["mt5_password_encrypted"], profile["gender"],
-                    profile["region"], profile["country"], profile["invite_code"], profile["capital_range"],
-                    profile["needs_training"], profile["provides_capital"],
-                    profile["withdrawal_method"], profile["currency"],
-                    datetime.now(timezone.utc).isoformat(),
-                ))
+        supabase = get_supabase_client()
+        
+        # 检查身份证是否已注册
+        existing = supabase.table("users").select("id").eq("id_number_hash", profile["id_number_hash"]).execute()
+        if existing.data:
+            return False, "此身份证／护照号码已经注册过。"
+        
+        # 插入新用户
+        supabase.table("users").insert({
+            "username": username,
+            "password_hash": hash_password(password),
+            "full_name": profile["full_name"],
+            "id_number_hash": profile["id_number_hash"],
+            "id_last4": profile["id_last4"],
+            "id_number_encrypted": profile["id_number_encrypted"],
+            "mt5_account": profile["mt5_account"],
+            "mt5_password_encrypted": profile["mt5_password_encrypted"],
+            "gender": profile["gender"],
+            "region": profile["region"],
+            "country": profile["country"],
+            "invite_code": profile["invite_code"],
+            "capital_range": profile["capital_range"],
+            "needs_training": profile["needs_training"],
+            "provides_capital": profile["provides_capital"],
+            "withdrawal_method": profile["withdrawal_method"],
+            "currency": profile["currency"],
+            "approved": 0,
+            "is_admin": 0,
+            "created_at": datetime.now(timezone.utc).isoformat()
+        }).execute()
+        
         return True, "注册申请已提交，等待管理员审核。"
-    except sqlite3.IntegrityError:
-        return False, "这个用户名已经被注册。"
+    except Exception as e:
+        return False, f"注册失败：{str(e)}"
 
 
 def check_login(username: str, password: str) -> tuple[str, bool]:
-    with sqlite3.connect(DATABASE_PATH) as conn:
-        user = conn.execute(
-            "SELECT password_hash, approved, is_admin, expires_at FROM users WHERE username=?",
-            (username,),
-        ).fetchone()
-    if not user or not verify_password(password, user[0]):
+    supabase = get_supabase_client()
+    response = supabase.table("users").select(
+        "password_hash, approved, is_admin, expires_at"
+    ).eq("username", username).execute()
+    
+    if not response.data:
         return "invalid", False
-    if not user[1]:
+    
+    user = response.data[0]
+    if not verify_password(password, user["password_hash"]):
+        return "invalid", False
+    if not user["approved"]:
         return "pending", False
-    if not user[2] and access_has_expired(user[3]):
+    if not user["is_admin"] and access_has_expired(user.get("expires_at")):
         return "expired", False
-    return "success", bool(user[2])
+    return "success", bool(user["is_admin"])
 
 
 def get_user_risk_pct(username: str) -> float:
-    with sqlite3.connect(DATABASE_PATH) as conn:
-        user = conn.execute(
-            "SELECT risk_pct FROM users WHERE username=?", (username,)
-        ).fetchone()
-    return float(user[0]) if user and user[0] is not None else 1.0
+    supabase = get_supabase_client()
+    response = supabase.table("users").select("risk_pct").eq("username", username).execute()
+    if response.data:
+        return float(response.data[0].get("risk_pct", 1.0))
+    return 1.0
 
 
 def set_user_risk_pct(user_id: int, risk_pct: float) -> None:
-    with sqlite3.connect(DATABASE_PATH) as conn:
-        conn.execute("UPDATE users SET risk_pct=? WHERE id=?", (risk_pct, user_id))
+    supabase = get_supabase_client()
+    supabase.table("users").update({"risk_pct": risk_pct}).eq("id", user_id).execute()
 
 
 def get_user_min_score(username: str) -> int:
-    with sqlite3.connect(DATABASE_PATH) as conn:
-        user = conn.execute(
-            "SELECT min_score FROM users WHERE username=?", (username,)
-        ).fetchone()
-    return int(user[0]) if user and user[0] is not None else 70
+    supabase = get_supabase_client()
+    response = supabase.table("users").select("min_score").eq("username", username).execute()
+    if response.data:
+        return int(response.data[0].get("min_score", 70))
+    return 70
 
 
 def set_user_min_score(user_id: int, min_score: int) -> None:
-    with sqlite3.connect(DATABASE_PATH) as conn:
-        conn.execute("UPDATE users SET min_score=? WHERE id=?", (min_score, user_id))
+    supabase = get_supabase_client()
+    supabase.table("users").update({"min_score": min_score}).eq("id", user_id).execute()
 
 
 def set_user_profit_share(user_id: int, profit_share_pct: float, recipient: str) -> None:
-    with sqlite3.connect(DATABASE_PATH) as conn:
-        conn.execute(
-            "UPDATE users SET profit_share_pct=?, profit_share_recipient=? WHERE id=?",
-            (profit_share_pct, recipient, user_id),
-        )
+    supabase = get_supabase_client()
+    supabase.table("users").update({
+        "profit_share_pct": profit_share_pct,
+        "profit_share_recipient": recipient
+    }).eq("id", user_id).execute()
 
 
 def show_member_profile(
@@ -264,7 +245,6 @@ def show_member_profile(
     profit_share_recipient: str | None, withdrawal_method: str | None,
     currency: str | None,
 ) -> None:
-    """Only call this function from the administrator area."""
     left, right = st.columns(2)
     left.write(f"**姓名：** {full_name or '未填写'}")
     left.write(f"**身份证／护照：** {mask_id_number(id_last4)}")
@@ -287,15 +267,18 @@ def show_member_profile(
 
 
 def session_is_active() -> bool:
-    """每次页面重跑时验证账号仍然获准，避免旧登录会话继续访问。"""
     username = st.session_state.get("username")
     if not username:
         return False
-    with sqlite3.connect(DATABASE_PATH) as conn:
-        user = conn.execute(
-            "SELECT approved, is_admin, expires_at FROM users WHERE username=?", (username,)
-        ).fetchone()
-    return bool(user and user[0] and (user[1] or not access_has_expired(user[2])))
+    supabase = get_supabase_client()
+    response = supabase.table("users").select(
+        "approved, is_admin, expires_at"
+    ).eq("username", username).execute()
+    
+    if not response.data:
+        return False
+    user = response.data[0]
+    return bool(user["approved"] and (user["is_admin"] or not access_has_expired(user.get("expires_at"))))
 
 
 def login_required() -> None:
@@ -393,7 +376,6 @@ def api_key() -> str:
 
 
 def demo_data(periods: int = 200) -> pd.DataFrame:
-    """仅用于页面预览；调用方必须在 UI 中清楚标示为模拟数据。"""
     rng = np.random.default_rng(42)
     index = pd.date_range(end=datetime.now(timezone.utc), periods=periods, freq="h")
     close = 2_350 * np.exp(np.cumsum(rng.normal(0, 0.0018, periods)))
@@ -406,7 +388,6 @@ def demo_data(periods: int = 200) -> pd.DataFrame:
 
 @st.cache_data(ttl=60, show_spinner=False)
 def load_candles(key: str) -> tuple[pd.DataFrame, str]:
-    """读取 Twelve Data XAU/USD 小时 K 线；失败时明确标示演示数据。"""
     if not key or "粘贴在这里" in key:
         return demo_data(), "演示数据（未配置 API 密钥）"
     try:
@@ -456,21 +437,26 @@ def add_indicators(frame: pd.DataFrame) -> pd.DataFrame:
 
 
 def score_signal(df: pd.DataFrame, threshold: float) -> Signal:
-    """透明的规则评分，不把技术指标伪装成预测模型。"""
     row = df.iloc[-1]
     score, reasons = 0, []
     if row.Close > row.MA20:
-        score += 1; reasons.append("价格位于 20 小时均线上方")
+        score += 1
+        reasons.append("价格位于 20 小时均线上方")
     else:
-        score -= 1; reasons.append("价格位于 20 小时均线下方")
+        score -= 1
+        reasons.append("价格位于 20 小时均线下方")
     if row.MACD > row.MACD_signal:
-        score += 1; reasons.append("MACD 位于信号线上方")
+        score += 1
+        reasons.append("MACD 位于信号线上方")
     else:
-        score -= 1; reasons.append("MACD 位于信号线下方")
+        score -= 1
+        reasons.append("MACD 位于信号线下方")
     if row.RSI >= 55:
-        score += 1; reasons.append("RSI 显示偏强动能")
+        score += 1
+        reasons.append("RSI 显示偏强动能")
     elif row.RSI <= 45:
-        score -= 1; reasons.append("RSI 显示偏弱动能")
+        score -= 1
+        reasons.append("RSI 显示偏弱动能")
     else:
         reasons.append("RSI 处于中性区域")
 
@@ -497,6 +483,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
+# 初始化数据库（Supabase）
 init_database()
 st_autorefresh(interval=60_000, limit=None, key="access_expiry_check")
 login_required()
@@ -510,112 +497,119 @@ with st.sidebar:
     if st.session_state.get("is_admin"):
         st.divider()
         st.subheader("👑 注册审核")
-        with sqlite3.connect(DATABASE_PATH) as conn:
-            access_days = st.number_input(
-                "新批准账户的访问期限（天）", min_value=1,
-                max_value=365, value=DEFAULT_ACCESS_DAYS, step=1,
-                key="new_user_access_days",
-            )
-            waiting_users = conn.execute(
-                "SELECT id, username, full_name, id_last4, id_number_encrypted, mt5_account, "
-                "mt5_password_encrypted, gender, region, country, invite_code, "
-                "capital_range, needs_training, provides_capital, profit_share_pct, "
-                "profit_share_recipient, withdrawal_method, currency "
-                "FROM users WHERE approved=0 ORDER BY created_at"
-            ).fetchall()
+        
+        supabase = get_supabase_client()
+        access_days = st.number_input(
+            "新批准账户的访问期限（天）", min_value=1,
+            max_value=365, value=DEFAULT_ACCESS_DAYS, step=1,
+            key="new_user_access_days",
+        )
+        
+        # 获取待审核用户
+        waiting_response = supabase.table("users").select(
+            "id, username, full_name, id_last4, id_number_encrypted, mt5_account, "
+            "mt5_password_encrypted, gender, region, country, invite_code, "
+            "capital_range, needs_training, provides_capital, profit_share_pct, "
+            "profit_share_recipient, withdrawal_method, currency"
+        ).eq("approved", 0).order("created_at").execute()
+        
+        waiting_users = waiting_response.data
+        
         if not waiting_users:
             st.caption("目前没有等待审核的用户。")
-        for (user_id, username, full_name, id_last4, id_number_encrypted, mt5_account,
-             mt5_password_encrypted, gender, region, country, invite_code, capital_range,
-             needs_training, provides_capital, profit_share_pct,
-             profit_share_recipient, withdrawal_method, currency) in waiting_users:
-            with st.expander(f"查看 {username} 的会员资料"):
+        
+        for user_data in waiting_users:
+            with st.expander(f"查看 {user_data['username']} 的会员资料"):
                 show_member_profile(
-                    user_id, full_name, id_last4, id_number_encrypted, mt5_account,
-                    mt5_password_encrypted, gender, region, country, invite_code,
-                    capital_range, needs_training, provides_capital, profit_share_pct,
-                    profit_share_recipient, withdrawal_method, currency,
+                    user_data.get("id"), user_data.get("full_name"), user_data.get("id_last4"),
+                    user_data.get("id_number_encrypted"), user_data.get("mt5_account"),
+                    user_data.get("mt5_password_encrypted"), user_data.get("gender"),
+                    user_data.get("region"), user_data.get("country"), user_data.get("invite_code"),
+                    user_data.get("capital_range"), user_data.get("needs_training"),
+                    user_data.get("provides_capital"), user_data.get("profit_share_pct"),
+                    user_data.get("profit_share_recipient"), user_data.get("withdrawal_method"),
+                    user_data.get("currency"),
                 )
             left, right = st.columns([2, 1])
-            left.write(f"👤 {username}")
-            if right.button("通过", key=f"approve_{user_id}"):
-                with sqlite3.connect(DATABASE_PATH) as conn:
-                    conn.execute(
-                        "UPDATE users SET approved=1, expires_at=? WHERE id=?",
-                        (expires_at_after(int(access_days)), user_id),
-                    )
+            left.write(f"👤 {user_data['username']}")
+            if right.button("通过", key=f"approve_{user_data['id']}"):
+                supabase.table("users").update({
+                    "approved": 1,
+                    "expires_at": expires_at_after(int(access_days))
+                }).eq("id", user_data["id"]).execute()
                 st.rerun()
 
         st.caption("已通过的用户")
-        with sqlite3.connect(DATABASE_PATH) as conn:
-            active_users = conn.execute(
-                "SELECT id, username, risk_pct, min_score, expires_at, full_name, id_last4, "
-                "id_number_encrypted, mt5_account, mt5_password_encrypted, gender, region, country, "
-                "invite_code, capital_range, needs_training, "
-                "provides_capital, profit_share_pct, profit_share_recipient, withdrawal_method, currency "
-                "FROM users WHERE approved=1 AND is_admin=0 ORDER BY username"
-            ).fetchall()
+        
+        # 获取已通过用户
+        active_response = supabase.table("users").select(
+            "id, username, risk_pct, min_score, expires_at, full_name, id_last4, "
+            "id_number_encrypted, mt5_account, mt5_password_encrypted, gender, region, country, "
+            "invite_code, capital_range, needs_training, "
+            "provides_capital, profit_share_pct, profit_share_recipient, withdrawal_method, currency"
+        ).eq("approved", 1).eq("is_admin", 0).order("username").execute()
+        
+        active_users = active_response.data
+        
         if not active_users:
             st.caption("目前没有其他已通过用户。")
-        for (user_id, username, saved_risk_pct, saved_min_score, expires_at, full_name, id_last4,
-             id_number_encrypted, mt5_account, mt5_password_encrypted, gender, region, country,
-             invite_code, capital_range, needs_training,
-             provides_capital, profit_share_pct, profit_share_recipient, withdrawal_method,
-             currency) in active_users:
-            status = "已到期" if access_has_expired(expires_at) else "有效"
-            with st.expander(f"查看 {username} 的会员资料"):
+        
+        for user_data in active_users:
+            status = "已到期" if access_has_expired(user_data.get("expires_at")) else "有效"
+            with st.expander(f"查看 {user_data['username']} 的会员资料"):
                 show_member_profile(
-                    user_id, full_name, id_last4, id_number_encrypted, mt5_account,
-                    mt5_password_encrypted, gender, region, country, invite_code,
-                    capital_range, needs_training, provides_capital, profit_share_pct,
-                    profit_share_recipient, withdrawal_method, currency,
+                    user_data.get("id"), user_data.get("full_name"), user_data.get("id_last4"),
+                    user_data.get("id_number_encrypted"), user_data.get("mt5_account"),
+                    user_data.get("mt5_password_encrypted"), user_data.get("gender"),
+                    user_data.get("region"), user_data.get("country"), user_data.get("invite_code"),
+                    user_data.get("capital_range"), user_data.get("needs_training"),
+                    user_data.get("provides_capital"), user_data.get("profit_share_pct"),
+                    user_data.get("profit_share_recipient"), user_data.get("withdrawal_method"),
+                    user_data.get("currency"),
                 )
-            st.caption(f"访问状态：{status} · 到期：{format_expiry(expires_at)}")
-            st.write(f"👤 {username}")
+            st.caption(f"访问状态：{status} · 到期：{format_expiry(user_data.get('expires_at'))}")
+            st.write(f"👤 {user_data['username']}")
             risk_left, score_left = st.columns(2)
             assigned_risk = risk_left.number_input(
                 "单笔风险上限 (%)", min_value=0.25, max_value=5.0,
-                value=float(saved_risk_pct or 1.0), step=0.25,
-                key=f"risk_{user_id}",
+                value=float(user_data.get("risk_pct", 1.0)), step=0.25,
+                key=f"risk_{user_data['id']}",
             )
             assigned_score = score_left.number_input(
                 "最低评分门槛", min_value=60, max_value=85,
-                value=int(saved_min_score or 70), step=1,
-                key=f"score_{user_id}",
+                value=int(user_data.get("min_score", 70)), step=1,
+                key=f"score_{user_data['id']}",
             )
             share_left, recipient_right = st.columns(2)
             assigned_profit_share = share_left.number_input(
                 "利润分成 (%)", min_value=0.0, max_value=100.0,
-                value=float(profit_share_pct or 0.0), step=1.0,
-                key=f"profit_share_{user_id}",
+                value=float(user_data.get("profit_share_pct", 0.0)), step=1.0,
+                key=f"profit_share_{user_data['id']}",
             )
             assigned_recipient = recipient_right.text_input(
-                "分成对象", value=profit_share_recipient or "",
-                key=f"profit_recipient_{user_id}",
+                "分成对象", value=user_data.get("profit_share_recipient") or "",
+                key=f"profit_recipient_{user_data['id']}",
             )
             renew_left, save_left, revoke_right = st.columns(3)
-            if renew_left.button("续期 30 天", key=f"renew_{user_id}"):
+            if renew_left.button("续期 30 天", key=f"renew_{user_data['id']}"):
                 try:
-                    current_expiry = datetime.fromisoformat(expires_at) if expires_at else datetime.now(timezone.utc)
+                    current_expiry = datetime.fromisoformat(user_data.get("expires_at")) if user_data.get("expires_at") else datetime.now(timezone.utc)
                     if current_expiry.tzinfo is None:
                         current_expiry = current_expiry.replace(tzinfo=timezone.utc)
                 except (TypeError, ValueError):
                     current_expiry = datetime.now(timezone.utc)
                 base = max(current_expiry.astimezone(timezone.utc), datetime.now(timezone.utc))
-                with sqlite3.connect(DATABASE_PATH) as conn:
-                    conn.execute(
-                        "UPDATE users SET expires_at=? WHERE id=?",
-                        ((base + timedelta(days=DEFAULT_ACCESS_DAYS)).isoformat(), user_id),
-                    )
+                supabase.table("users").update({
+                    "expires_at": (base + timedelta(days=DEFAULT_ACCESS_DAYS)).isoformat()
+                }).eq("id", user_data["id"]).execute()
                 st.rerun()
-            if save_left.button("保存设置", key=f"save_settings_{user_id}"):
-                set_user_risk_pct(user_id, assigned_risk)
-                set_user_min_score(user_id, assigned_score)
-                set_user_profit_share(user_id, assigned_profit_share, assigned_recipient.strip())
+            if save_left.button("保存设置", key=f"save_settings_{user_data['id']}"):
+                set_user_risk_pct(user_data["id"], assigned_risk)
+                set_user_min_score(user_data["id"], assigned_score)
+                set_user_profit_share(user_data["id"], assigned_profit_share, assigned_recipient.strip())
                 st.rerun()
-            if revoke_right.button("取消权限", key=f"revoke_{user_id}"):
-                with sqlite3.connect(DATABASE_PATH) as conn:
-                    conn.execute("UPDATE users SET approved=0 WHERE id=?", (user_id,))
+            if revoke_right.button("取消权限", key=f"revoke_{user_data['id']}"):
+                supabase.table("users").update({"approved": 0}).eq("id", user_data["id"]).execute()
                 st.rerun()
 
     st.divider()
